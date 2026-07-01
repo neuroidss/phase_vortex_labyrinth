@@ -1,3 +1,4 @@
+# phase_vortex_labyrinth.py
 import pygame
 import torch
 import torch.nn.functional as F
@@ -5,8 +6,11 @@ import math
 import sys
 import numpy as np
 import random
+import warnings
 
-# Попытка импортировать твои реальные модули ЭЭГ
+warnings.filterwarnings("ignore", category=UserWarning)
+
+# Попытка импортировать реальные модули ЭЭГ
 try:
     from neuro_driver import RealNeuroDriver
     from symbiotic_engine import SymbioticEngineGPU
@@ -18,372 +22,495 @@ except ImportError:
     COORDS_16_Y = [-2.72, -7.43, -4.77, -10.15, -10.14, -4.77, -7.42, -2.73, 2.72, 7.43, 4.76, 10.14, 10.15, 4.77, 7.42, 2.71]
 
 WIDTH, HEIGHT = 800, 800
-MAZE_DIM = 11  
-CELL_SIZE = WIDTH // MAZE_DIM
-COMPUTE_RES = 144  # Оптимальное разрешение для Tensor Cores вычислений (144x144)
-
-class MazeStructure:
-    """Генератор каркаса лабиринта"""
-    def __init__(self, dim):
-        self.dim = dim
-        self.grid = np.ones((dim, dim), dtype=np.float32)
-        self.generate(1, 1)
-        self.exit_x, self.exit_y = dim - 2, dim - 2
-        self.grid[self.exit_y][self.exit_x] = 0.0
-
-    def generate(self, cx, cy):
-        self.grid[cy][cx] = 0
-        directions = [(0, 2), (0, -2), (2, 0), (-2, 0)]
-        random.shuffle(directions)
-        for dx, dy in directions:
-            nx, ny = cx + dx, cy + dy
-            if 0 < nx < self.dim - 1 and 0 < ny < self.dim - 1 and self.grid[ny][nx] == 1:
-                self.grid[cy + dy // 2][cx + dx // 2] = 0
-                self.generate(nx, ny)
+COMPUTE_RES = 128  # Сетка 128x128 для численного решения уравнений Навье-Стокса (Stable Fluids)
 
 class PurePhaseVortexLabyrinth:
     def __init__(self, device):
         self.device = device
-        self.maze = MazeStructure(MAZE_DIM)
-        
         self.res = COMPUTE_RES
         
+        # Конфигурационные параметры физики и чувствительности
         self.cfg = {
-            'intent_gain': 750.0,   # Базовая сила ЭЭГ тяги
-            'torque_gain': 0.15,    # Чувствительность разворота ЭЭГ
-            'eeg_smooth': 0.96,     # Фильтрация шума ЭЭГ
-            'node_strength': 4500.0,# Сила отталкивания несинхронных вихрей
-            'max_vel': 350.0,       
-            'damping': 0.88         
+            'vorticity_sensitivity': 0.15,  # Чувствительность вращения камеры от вихрей жидкости
+            'manual_rotation_speed': 1.8,   # Базовая скорость ручного вращения (клавиатура)
+            'fluid_damping': 0.80,          # Вязкое трение (затухание) скорости слайма
         }
         
-        self.core_delta2 = 25.0 ** 2
+        # Переменная для сглаживания вихревого вращения (low-pass filter)
+        self.smooth_vorticity = 0.0
         
-        self.smooth_vx = 0.0
-        self.smooth_vy = 0.0
-        self.smooth_tq = 0.0
+        # Физические сетки симуляции (в мировом пространстве)
+        self.u = torch.zeros((1, 1, self.res, self.res), dtype=torch.float32, device=self.device) # Горизонтальная скорость
+        self.v = torch.zeros((1, 1, self.res, self.res), dtype=torch.float32, device=self.device) # Вертикальная скорость
+        self.density = torch.zeros((1, 3, self.res, self.res), dtype=torch.float32, device=self.device) # RGB плотность цвета
+        
+        # Физическое тело игрока — мягкий деформируемый слайм (плотность)
+        self.player_density = torch.zeros((1, 1, self.res, self.res), dtype=torch.float32, device=self.device)
+        
+        # Координатная сетка для полу-Лагранжевой адвекции
+        y_grid, x_grid = torch.meshgrid(
+            torch.linspace(-1.0, 1.0, self.res, device=self.device),
+            torch.linspace(-1.0, 1.0, self.res, device=self.device),
+            indexing='ij'
+        )
+        self.grid_x = x_grid # Форма (res, res)
+        self.grid_y = y_grid # Форма (res, res)
         
         # Геометрия FreeEEG16
         self.pin_x = torch.tensor(COORDS_16_X, device=self.device)
         self.pin_y = torch.tensor(COORDS_16_Y, device=self.device)
         
-        # Координаты Аватара ( player_pos — мировые, на экране он ВСЕГДА в центре )
-        self.player_pos = torch.tensor([WIDTH / 2.0, HEIGHT - 100.0], dtype=torch.float32, device=self.device)
-        self.player_vel = torch.zeros(2, dtype=torch.float32, device=self.device)
-        self.player_angle = 0.0 
+        # Динамические масштабы упругого сжатия цитоскелета для каждого из 16 ядер
+        self.current_pin_scales = torch.ones(16, device=self.device)
         
-        # --- ОРГАНИЧЕСКИЙ ЛАБИРИНТ: 400 ВИХРЕЙ ПО СПИРАЛИ ФИБОНАЧЧИ ---
-        self.num_world_nodes = 400
-        self.num_world_elec = self.num_world_nodes
-        self.total_vortices = 16 + self.num_world_elec
+        # Статический каркас лабиринта и динамическое поле неньютоновского геля стен
+        self.orig_obstacles = self.init_obstacles()
+        self.wall_density = self.orig_obstacles.clone() # Очень прочные, но деформируемые давлением стены
         
-        self.positions = torch.zeros((self.total_vortices, 2), dtype=torch.float32, device=self.device)
-        self.gammas = torch.zeros(self.total_vortices, dtype=torch.float32, device=self.device)
-        self.chiralities = torch.ones(self.total_vortices, dtype=torch.float32, device=self.device)
-        self.phases = torch.zeros(self.total_vortices, dtype=torch.float32, device=self.device)
+        # Аватар игрока (Lander) — позиция и угол хранятся в мировом пространстве
+        self.player_pos = torch.tensor([WIDTH / 2.0, HEIGHT / 2.0], dtype=torch.float32, device=self.device)
+        self.player_angle = 0.0 # Угол поворота аватара в радианах
         
-        phi_gold = (1.0 + math.sqrt(5.0)) / 2.0
-        golden_angle = phi_gold * 2.0 * math.pi
+    def init_obstacles(self):
+        obstacles = torch.zeros((1, 1, self.res, self.res), device=self.device)
+        r = torch.sqrt(self.grid_x**2 + self.grid_y**2)
+        theta = torch.atan2(self.grid_y, self.grid_x)
         
-        world_x = []
-        world_y = []
-        world_freqs = []
-        world_chirality = []
+        # 3 очень плотных концентрических барьера-кольца толщиной 0.10 (~40 пикселей)
+        # Проходы оставлены такими же широкими (1.0 рад), как и раньше.
+        rings_cfg = [
+            {"r_min": 0.18, "r_max": 0.28, "gap_start": -0.5, "gap_end": 0.5}, # Толщина 0.10
+            {"r_min": 0.48, "r_max": 0.58, "gap_start": 1.2,  "gap_end": 2.2},  # Толщина 0.10
+            {"r_min": 0.78, "r_max": 0.88, "gap_start": -2.3, "gap_end": -1.3}  # Толщина 0.10
+        ]
         
-        for i in range(self.num_world_nodes):
-            r = math.sqrt(i) / math.sqrt(self.num_world_nodes) * 360.0
-            theta = i * golden_angle
+        for ring in rings_cfg:
+            ring_mask = (r >= ring["r_min"]) & (r <= ring["r_max"])
+            gap_mask = (theta >= ring["gap_start"]) & (theta <= ring["gap_end"])
+            obstacles[0, 0, ring_mask & ~gap_mask] = 1.0
             
-            x = WIDTH / 2.0 + math.cos(theta) * r
-            y = HEIGHT / 2.0 + math.sin(theta) * r
-            
-            world_x.append(x)
-            world_y.append(y)
-            world_chirality.append(-1.0 if i % 2 == 0 else 1.0)
-            
-        self.world_centers = torch.tensor(list(zip(world_x, world_y)), dtype=torch.float32, device=self.device)
-        self.chiralities[16:] = torch.tensor(world_chirality, dtype=torch.float32, device=self.device)
-        
-        # Определение Стен и Пола на базе синусоидальной волны
-        scale_x, scale_y = 0.015, 0.015
-        wave_val = torch.sin(self.world_centers[:, 0] * scale_x) * torch.cos(self.world_centers[:, 1] * scale_y)
-        self.is_barrier = wave_val > 0.12 
-        
-        freqs = []
-        for i in range(self.num_world_nodes):
-            if self.is_barrier[i]:
-                freqs.append(random.uniform(-4.0, -2.0) if i % 2 == 0 else random.uniform(2.0, 4.0))
-            else:
-                freqs.append(1.0 if i % 2 == 0 else -1.0)
-                
-        self.node_freqs = torch.tensor(freqs, dtype=torch.float32, device=self.device)
-        self.node_captured = torch.zeros(self.num_world_nodes, dtype=torch.bool, device=self.device)
-        self.chiralities[:16] = 1.0 
-        
-        # Сетка координат экрана (Tensor Cores)
-        y_grid, x_grid = torch.meshgrid(
-            torch.linspace(0, HEIGHT, self.res, device=self.device), 
-            torch.linspace(0, WIDTH, self.res, device=self.device),
-            indexing='ij'
-        )
-        self.P_grid = torch.stack([x_grid.flatten(), y_grid.float().flatten()], dim=1) 
-        self.P_sq = torch.sum(self.P_grid**2, dim=1, keepdim=True) 
+        return obstacles
 
     def reset_world(self):
-        self.player_pos = torch.tensor([WIDTH / 2.0, HEIGHT - 100.0], dtype=torch.float32, device=self.device)
-        self.player_vel.zero_()
+        self.player_pos.copy_(torch.tensor([WIDTH / 2.0, HEIGHT / 2.0], device=self.device))
         self.player_angle = 0.0
-        self.node_captured.zero_()
-        self.phases.zero_()
+        self.u.zero_()
+        self.v.zero_()
+        self.density.zero_()
+        self.player_density.zero_()
+        self.wall_density.copy_(self.orig_obstacles)
+        self.smooth_vorticity = 0.0
 
-    def step(self, ciplv_tensor, compression, dt, time_sec, eeg_vx, eeg_vy, eeg_tq, eeg_phases):
-        chaos = 1.0 - compression
+    def advect(self, field, dt):
+        # Полу-Лагранжева адвекция с аппаратным билинейным сэмплингом PyTorch
+        dx = self.u[0, 0] * (dt * 2.0 / self.res)
+        dy = self.v[0, 0] * (dt * 2.0 / self.res)
         
-        # Сглаживание ЭЭГ сигналов
-        sm = self.cfg['eeg_smooth']
-        self.smooth_vx = self.smooth_vx * sm + eeg_vx * (1.0 - sm)
-        self.smooth_vy = self.smooth_vy * sm + eeg_vy * (1.0 - sm)
-        self.smooth_tq = self.smooth_tq * sm + eeg_tq * (1.0 - sm)
+        sampling_grid = torch.stack([self.grid_x - dx, self.grid_y - dy], dim=-1).unsqueeze(0)
+        sampling_grid = torch.clamp(sampling_grid, -1.0, 1.0)
         
-        # Вращение аватара по сглаженному углу
-        self.player_angle += self.smooth_tq * dt * self.cfg['torque_gain'] * 10.0
-        self.player_angle = (self.player_angle + math.pi) % (2 * math.pi) - math.pi
-        
-        # === ИСПРАВЛЕНО (ЛОКАЛЬНОСТЬ АВАТАРА): Аватар больше НЕ вращается относительно экрана! ===
-        # Его пины на экране всегда стоят жестко (Верх — это верх, Лево — лево)
-        # Это обеспечивает прямую деконструкцию геймпада и идеальную читаемость направлений
-        scale = 1.5 + chaos * 5.0
-        self.positions[:16, 0] = WIDTH / 2.0 + self.pin_x * scale
-        self.positions[:16, 1] = HEIGHT / 2.0 + self.pin_y * scale
+        return F.grid_sample(field, sampling_grid, mode='bilinear', padding_mode='border', align_corners=True)
 
-        # Вращаем мир вокруг игрока
-        cos_cam = math.cos(-self.player_angle)
-        sin_cam = math.sin(-self.player_angle)
+    def project(self):
+        # Строгая непроницаемая маска твердых барьеров у стен
+        block_mask = (self.wall_density > 0.15).float()
         
-        dx_w = self.world_centers[:, 0] - self.player_pos[0]
-        dy_w = self.world_centers[:, 1] - self.player_pos[1]
+        # Обнуляем скорость внутри стен для предотвращения любого численного просачивания жидкости
+        self.u = self.u * (1.0 - block_mask)
+        self.v = self.v * (1.0 - block_mask)
         
-        rx_w = dx_w * cos_cam - dy_w * sin_cam
-        ry_w = dx_w * sin_cam + dy_w * cos_cam
+        u_pad = F.pad(self.u, (1, 1, 0, 0), mode='replicate')
+        v_pad = F.pad(self.v, (0, 0, 1, 1), mode='replicate')
+        div = 0.5 * (u_pad[:, :, :, 2:] - u_pad[:, :, :, :-2] + v_pad[:, :, 2:, :] - v_pad[:, :, :-2, :])
         
-        self.positions[16:, 0] = WIDTH / 2.0 + rx_w
-        self.positions[16:, 1] = HEIGHT / 2.0 + ry_w
-
-        # Обновление зарядов
-        if ciplv_tensor is not None:
-            user_gammas = torch.sum(ciplv_tensor, dim=1) * 350.0 
-        else:
-            user_gammas = torch.ones(16, device=self.device) * 100.0
+        # Итерации Якоби для давления
+        p = torch.zeros_like(self.u)
+        for _ in range(40):
+            p_pad = F.pad(p, (1, 1, 1, 1), mode='replicate')
+            p = 0.25 * (p_pad[:, :, 1:-1, 2:] + p_pad[:, :, 1:-1, :-2] + 
+                        p_pad[:, :, 2:, 1:-1] + p_pad[:, :, :-2, 1:-1] - div)
+            # Давление полностью блокируется твердыми границами стен
+            p = p * (1.0 - block_mask)
             
-        self.gammas[:16] = user_gammas
-        self.phases[:16] = eeg_phases
+        p_pad = F.pad(p, (1, 1, 1, 1), mode='replicate')
+        self.u -= 0.5 * (p_pad[:, :, 1:-1, 2:] - p_pad[:, :, 1:-1, :-2])
+        self.v -= 0.5 * (p_pad[:, :, 2:, 1:-1] - p_pad[:, :, :-2, 1:-1])
         
-        world_base_phases = (torch.arange(self.num_world_nodes, device=self.device) * 0.1 + time_sec * self.node_freqs * (0.2 + 0.8 * compression)) % (2 * math.pi)
-        captured_mask = self.node_captured
-        
-        self.phases[16:] = torch.where(captured_mask, self.phases[0], world_base_phases)
-        self.gammas[16:] = torch.where(captured_mask, torch.tensor(350.0, device=self.device), torch.lerp(torch.tensor(100.0, device=self.device), torch.tensor(self.cfg['node_strength'], device=self.device), compression))
+        # Повторно фиксируем нулевую скорость на границах (герметизация)
+        self.u = self.u * (1.0 - block_mask)
+        self.v = self.v * (1.0 - block_mask)
 
-        # ====================================================================
-        # ЭТАП 3: РАСЧЕТ ИНДУЦИРОВАННЫХ СКОРОСТЕЙ И ОТТАЛКИВАНИЙ НА GPU
-        # ====================================================================
-        coords = self.positions.unsqueeze(1) - self.positions.unsqueeze(0) 
-        dx = coords[:, :, 0]
-        dy = coords[:, :, 1]
-        r2 = dx**2 + dy**2 + self.core_delta2
+    def step(self, dt, time_sec, eeg_vx, eeg_vy, eeg_tq, eeg_phases, is_real_data, compression, scale):
+        # Предохранители от численного взрыва при сбоях симуляции (NaN/Inf recovery)
+        self.u = torch.nan_to_num(self.u, nan=0.0, posinf=0.0, neginf=0.0)
+        self.v = torch.nan_to_num(self.v, nan=0.0, posinf=0.0, neginf=0.0)
+        self.density = torch.nan_to_num(self.density, nan=0.0, posinf=0.0, neginf=0.0)
+        self.wall_density = torch.nan_to_num(self.wall_density, nan=0.0, posinf=0.0, neginf=0.0)
+        self.player_density = torch.nan_to_num(self.player_density, nan=0.0, posinf=0.0, neginf=0.0)
         
-        ind_u = -self.gammas.unsqueeze(0) * dy / (2 * math.pi * r2)
-        ind_v = self.gammas.unsqueeze(0) * dx / (2 * math.pi * r2)
+        # Ограничение максимальной скорости течений (CFL clamp)
+        self.u = torch.clamp(self.u, -200.0, 200.0)
+        self.v = torch.clamp(self.v, -200.0, 200.0)
         
-        ind_u.fill_diagonal_(0.0)
-        ind_v.fill_diagonal_(0.0)
+        # Медленное рассеивание (dissipation)
+        self.density *= 0.985
+        self.u *= 0.99
+        self.v *= 0.99
         
-        vortex_vel_u = torch.sum(ind_u, dim=1)
-        vortex_vel_v = torch.sum(ind_v, dim=1)
-
-        avg_flow_u = torch.mean(vortex_vel_u[:16]).item()
-        avg_flow_v = torch.mean(vortex_vel_v[:16]).item()
-
-        # Движение сонаправлено повороту аватара
-        cos_a = math.cos(self.player_angle)
-        sin_a = math.sin(self.player_angle)
+        # Медленное адвективное течение самих стен (эффект пластичной эрозии/сдвига геля под сильным током)
+        self.wall_density = self.advect(self.wall_density, dt * 0.08)
         
-        # Движение из эфира: затухание в пустоте
-        dists = torch.sqrt((self.player_pos[0] - self.world_centers[:, 0])**2 + (self.player_pos[1] - self.world_centers[:, 1])**2)
-        local_vortex_density = torch.clamp(torch.sum(torch.exp(-dists / 100.0)) / 5.0, 0.0, 1.0).item()
-        current_damping = self.cfg['damping'] * local_vortex_density
-
-        intent_u = (cos_a * self.smooth_vx - sin_a * self.smooth_vy) * self.cfg['intent_gain'] * local_vortex_density
-        intent_v = (sin_a * self.smooth_vx + cos_a * self.smooth_vy) * self.cfg['intent_gain'] * local_vortex_density
+        # ФИЗИЧЕСКАЯ ЭРОЗИЯ ПОТОКОМ: Сильные течения и реактивные струи постепенно размывают гель стен!
+        fluid_speed = torch.sqrt(self.u**2 + self.v**2)
+        erosion = fluid_speed * 0.04 * dt
+        self.wall_density = torch.clamp(self.wall_density - erosion, 0.0, 1.0)
         
-        self.player_vel[0] += (intent_u + avg_flow_u * local_vortex_density) * dt
-        self.player_vel[1] += (intent_v + avg_flow_v * local_vortex_density) * dt
-        self.player_vel *= current_damping
+        # Эластичное восстановление формы стен лабиринта (Memory Foam Effect)
+        self.wall_density += (self.orig_obstacles - self.wall_density) * 0.35 * dt
+        self.wall_density = torch.clamp(self.wall_density, 0.0, 1.0)
         
-        v_mag = torch.sqrt(self.player_vel[0]**2 + self.player_vel[1]**2)
-        if v_mag > self.cfg['max_vel']:
-            self.player_vel = (self.player_vel / v_mag) * self.cfg['max_vel']
+        # Поворот аватара (камеры) рассчитывается ниже через физический вихревой ротор течения!
+        cos_p = math.cos(self.player_angle)
+        sin_p = math.sin(self.player_angle)
+        
+        y_indices, x_indices = torch.meshgrid(
+            torch.arange(self.res, device=self.device, dtype=torch.float32),
+            torch.arange(self.res, device=self.device, dtype=torch.float32),
+            indexing='ij'
+        )
+        
+        # === ДИНАМИЧЕСКИЙ ЦИТОСКЕЛЕТ СЛАЙМА ===
+        # Для каждого из 16 ядер рассчитываем уровень сжатия, чтобы они не заходили в стены
+        self.current_pin_scales = torch.ones(16, device=self.device) * scale
+        for i in range(16):
+            # Проверяем упругую деформацию луча скелета к центру
+            for step_idx in range(6):
+                curr_scale = scale * (1.0 - step_idx * 0.15)
+                dx = self.pin_x[i].item() * curr_scale * cos_p - self.pin_y[i].item() * curr_scale * sin_p
+                dy = self.pin_x[i].item() * curr_scale * sin_p + self.pin_y[i].item() * curr_scale * cos_p
+                
+                wx = self.player_pos[0].item() + dx
+                wy = self.player_pos[1].item() + dy
+                
+                # Фиксируем нативное CPU-ограничение диапазона координат
+                gx_idx = int(max(0, min(self.res - 1, (wx / WIDTH) * self.res)))
+                gy_idx = int(max(0, min(self.res - 1, (wy / HEIGHT) * self.res)))
+                
+                if self.wall_density[0, 0, gy_idx, gx_idx] < 0.25:
+                    self.current_pin_scales[i] = curr_scale
+                    break
+                else:
+                    self.current_pin_scales[i] = scale * 0.2 # Предельное сжатие при жестком сдавливании
+        
+        # 1. Впрыск сил из 16 электродов (ядер цитоскелета)
+        resting_player_density = torch.zeros_like(self.wall_density)
+        
+        for i in range(16):
+            pin_scale = self.current_pin_scales[i].item()
+            dx_pin_world = self.pin_x[i].item() * pin_scale * cos_p - self.pin_y[i].item() * pin_scale * sin_p
+            dy_pin_world = self.pin_x[i].item() * pin_scale * sin_p + self.pin_y[i].item() * scale * cos_p
             
-        self.player_pos += self.player_vel * dt
-
-        # === ИСПРАВЛЕНО (ЛОКАЛЬНЫЙ ФАЗОВЫЙ ЗАХВАТ ИЛИ ОТТАЛКИВАНИЕ): ===
-        # Мы проверяем близость каждого ИНДИВИДУАЛЬНОГО ПИНА аватара к вихрям среды на экране!
-        # Считаем попарные расстояния между твоими 16 пинами и 400 вихрями среды в экранных координатах
-        dx_inter = self.positions[:16, 0].unsqueeze(1) - self.positions[16:, 0].unsqueeze(0) # (16, 400)
-        dy_inter = self.positions[:16, 1].unsqueeze(1) - self.positions[16:, 1].unsqueeze(0)
-        dists_inter = torch.sqrt(dx_inter**2 + dy_inter**2 + 1e-5)
-        
-        # Область локального влияния пина ЭЭГ на вихрь среды (50 пикселей)
-        close_mask = (dists_inter < 50.0)
-        
-        # Разность фаз каждого пина с каждым близким вихрем
-        p_diff = self.phases[:16].unsqueeze(1) - self.phases[16:].unsqueeze(0) # (16, 400)
-        coherence = torch.cos(p_diff) # Косинусная близость (-1.0 ... 1.0)
-        
-        # Если фаза локального пина совпадает с фазой вихря среды — вихрь захвачен (резонанс)
-        aligned_mask = close_mask & (coherence > 0.70)
-        captured_this_frame = torch.any(aligned_mask, dim=0) # (400)
-        self.node_captured = self.node_captured | captured_this_frame
-        
-        # Если вихрь близко к твоему пину, но НЕ синхронизирован — он упруго отталкивает этот пин,
-        # создавая разворачивающий и выталкивающий момент сил для всего аватара!
-        repel_mask = close_mask & (~self.node_captured.unsqueeze(0)) & (coherence < 0.40)
-        
-        if torch.any(repel_mask):
-            repel_power = (1.0 - coherence) * 2000.0 * (0.5 + compression)
-            # Направление толчка: от вихря среды j к пину аватара i (dx_inter/dy_inter направлены от i к j, поэтому берем минус)
-            push_u = -dx_inter / dists_inter * repel_power * repel_mask.float()
-            push_v = -dy_inter / dists_inter * repel_power * repel_mask.float()
+            pin_world_x = self.player_pos[0].item() + dx_pin_world
+            pin_world_y = self.player_pos[1].item() + dy_pin_world
             
-            self.player_vel[0] += torch.sum(push_u) * dt
-            self.player_vel[1] += torch.sum(push_v) * dt
+            # Переводим в координаты сетки
+            pin_x_grid = (pin_world_x / WIDTH) * self.res
+            pin_y_grid = (pin_world_y / HEIGHT) * self.res
+            
+            # Накапливаем опорную форму слайма сжатого скелета (Rest Template)
+            d2_rest = (x_indices - pin_x_grid)**2 + (y_indices - pin_y_grid)**2
+            resting_density_node = torch.exp(-d2_rest / 16.0) # Мягкий радиус ядер
+            resting_player_density[0, 0] = torch.max(resting_player_density[0, 0], resting_density_node)
+            
+            # Генерация истинных вращающихся вихрей вокруг 16 ядер когерентностей ЭЭГ!
+            if is_real_data and eeg_phases is not None:
+                dx_grid = x_indices - pin_x_grid
+                dy_grid = y_indices - pin_y_grid
+                d2_dist = dx_grid**2 + dy_grid**2
+                
+                # Локальный пространственный конверт вихря
+                envelope = torch.exp(-d2_dist / 12.0).unsqueeze(0).unsqueeze(0)
+                
+                phase_angle = eeg_phases[i].item()
+                # Скорость вращения вихря когерентности модулируется фазовой активностью ЭЭГ
+                vortex_strength = math.sin(phase_angle) * 15.0 * (1.0 + compression * 2.0)
+                
+                # Математический расчет завихрения (spinning vortex velocity field)
+                d2_reg = d2_dist + 1.0
+                vortex_u = -dy_grid / d2_reg * vortex_strength
+                vortex_v = dx_grid / d2_reg * vortex_strength
+                
+                self.u += envelope * vortex_u.unsqueeze(0).unsqueeze(0)
+                self.v += envelope * vortex_v.unsqueeze(0).unsqueeze(0)
+                
+                # Впрыск цвета по фазе
+                self.density[:, 0, :, :] += envelope[0, 0] * abs(math.cos(phase_angle))
+                self.density[:, 1, :, :] += envelope[0, 0] * abs(math.sin(phase_angle))
+                self.density[:, 2, :, :] += envelope[0, 0] * abs(math.sin(phase_angle * 1.5))
 
-        # Ограничение мира
-        self.player_pos[0] = torch.clamp(self.player_pos[0], 100, WIDTH*2)
-        self.player_pos[1] = torch.clamp(self.player_pos[1], 100, HEIGHT*2)
+        # 2. Пересчет локального ввода во впрыск реактивных джет-потоков по центру слайма
+        # Слайм движется исключительно за счет того, что реактивные течения толкают его тело!
+        if is_real_data:
+            local_forward = -eeg_vy
+            local_right = eeg_vx
+            
+            # Поворачиваем локальную силу тяги в мировую систему координат
+            world_thrust_x = local_right * cos_p + local_forward * sin_p
+            world_thrust_y = -local_right * sin_p + local_forward * cos_p
+            
+            p_gx = (self.player_pos[0] / WIDTH) * self.res
+            p_gy = (self.player_pos[1] / HEIGHT) * self.res
+            
+            d2_player = (x_indices - p_gx)**2 + (y_indices - p_gy)**2
+            player_footprint = torch.exp(-d2_player / 5.0).unsqueeze(0).unsqueeze(0)
+            
+            # Впрыск направленного жидкостного джета прямо по центру слайма!
+            # При трении о среду этот джет автоматически генерирует вихревой диполь (vortex dipole), двигающий слайм.
+            self.u += player_footprint * world_thrust_x * 90.0 * (1.0 + compression * 3.0)
+            self.v += player_footprint * world_thrust_y * 90.0 * (1.0 + compression * 3.0)
+            
+            # Золотистый реактивный след
+            self.density[:, 0:1, :, :] += player_footprint * 1.0
+            self.density[:, 1:2, :, :] += player_footprint * 0.85
+            self.density[:, 2:3, :, :] += player_footprint * 0.1
+
+        # 3. Шаг численного решения Навье-Стокса
+        self.u = self.advect(self.u, dt)
+        self.v = self.advect(self.v, dt)
+        self.density = self.advect(self.density, dt)
+        self.project()
+
+        # 4. МЯГКОЕ ТЕЛО СЛАЙМА (Advection & Cohesion):
+        # Инициализация тела слайма при старте
+        if torch.sum(self.player_density) < 1e-4:
+            self.player_density.copy_(resting_player_density)
+            
+        # Тело слайма перемещается и деформируется ТОЛЬКО за счет адвекции полем скоростей Навье-Стокса!
+        self.player_density = self.advect(self.player_density, dt * 1.5)
         
-        if torch.sum(self.node_captured).item() > (self.num_world_nodes * 0.7):
+        # Сила упругого стягивания слайма обратно к его ядрам когерентностей (электродам)
+        self.player_density += (resting_player_density - self.player_density) * 4.5 * dt
+        
+        # Герметичное ограничение: плотность слайма мгновенно зануляется внутри твердых границ геля стен
+        block_mask = (self.wall_density > 0.15).float()
+        self.player_density = self.player_density * (1.0 - block_mask)
+        self.player_density = torch.clamp(self.player_density, 0.0, 1.0)
+
+        # 5. КОРТИКАЛЬНЫЙ ЦЕНТР МАСС (COM): 
+        # Камера и физический якорь игрока ВСЕГДА строго и абсолютно центрируются на центр масс его слайм-тела!
+        d_sum = torch.sum(self.player_density) + 1e-6
+        com_x = torch.sum(x_indices * self.player_density[0, 0]) / d_sum
+        com_y = torch.sum(y_indices * self.player_density[0, 0]) / d_sum
+        
+        # Переводим центр масс в пиксельные мировые координаты
+        com_world_x = (com_x / self.res) * WIDTH
+        com_world_y = (com_y / self.res) * HEIGHT
+        
+        # Абсолютное центрирование без лагов (камера жестко прикована к массе амебы)
+        self.player_pos[0] = com_world_x
+        self.player_pos[1] = com_world_y
+
+        self.player_pos[0] = torch.clamp(self.player_pos[0], 20.0, WIDTH - 20.0)
+        self.player_pos[1] = torch.clamp(self.player_pos[1], 20.0, HEIGHT - 20.0)
+
+        # === РАСЧЕТ ФИЗИЧЕСКОГО ВИХРЕВОГО МОМЕНТА (VORTICITY) ===
+        # Ротор течения вращает тело слайма, что плавно разворачивает камеру на угол player_angle!
+        u_pad = F.pad(self.u, (1, 1, 1, 1), mode='replicate')
+        v_pad = F.pad(self.v, (1, 1, 1, 1), mode='replicate')
+        dv_dx = 0.5 * (v_pad[:, :, 1:-1, 2:] - v_pad[:, :, 1:-1, :-2])
+        du_dy = 0.5 * (u_pad[:, :, 2:, 1:-1] - u_pad[:, :, :-2, 1:-1])
+        vorticity = dv_dx - du_dy # (1, 1, res, res)
+        
+        # Средняя завихренность течений, воздействующая на массу слайма
+        avg_vorticity = torch.sum(vorticity * self.player_density) / d_sum
+        
+        # Сглаживаем вихревое вращение с помощью экспоненциального фильтра (low-pass filter)
+        # Это полностью убирает высокочастотное 24-герцовое дрожание камеры от фазовых колебаний ЭЭГ [1, 2]
+        self.smooth_vorticity = self.smooth_vorticity * 0.92 + avg_vorticity.item() * 0.08
+        
+        # Динамически меняем угол курса на основе сглаженного вращения жидкости и ручного управления
+        if is_real_data:
+            self.player_angle += eeg_tq * dt * self.cfg['manual_rotation_speed']
+            self.player_angle += self.smooth_vorticity * dt * self.cfg['vorticity_sensitivity']
+            self.player_angle = (self.player_angle + math.pi) % (2.0 * math.pi) - math.pi
+
+        # === ПОБЕГ ЗА ПРЕДЕЛЫ ЛАБИРИНТА ===
+        dx_c = self.player_pos[0] - WIDTH / 2.0
+        dy_c = self.player_pos[1] - HEIGHT / 2.0
+        r_norm = torch.sqrt(dx_c**2 + dy_c**2) / 400.0 # Нормализованное расстояние от центра
+        
+        if r_norm.item() > 0.89: # Успешный выход за пределы самого внешнего кольца (r_max = 0.88)!
             self.reset_world()
 
-        return scale
+    def draw_electrode_sensors(self, surface):
+        """Отрисовка позиций 16 сухих электродов FreeEEG16, зафиксированных на экране и динамически сжимающихся"""
+        for i in range(16):
+            pin_scale = self.current_pin_scales[i].item()
+            sx = WIDTH / 2.0 + self.pin_x[i].item() * pin_scale
+            sy = HEIGHT / 2.0 + self.pin_y[i].item() * pin_scale
+            pygame.draw.circle(surface, (0, 255, 255, 100), (int(sx), int(sy)), 8, 1)
+            pygame.draw.circle(surface, (0, 255, 255), (int(sx), int(sy)), 2)
 
-    def render_field(self, compression, time_sec):
-        """ПОЛНЫЙ ОПТИМИЗИРОВАННЫЙ РЕНДЕР ЧЕРЕЗ СВЕРХБЫСТРЫЙ MATMUL"""
-        rgb = torch.zeros((self.res, self.res, 3), dtype=torch.uint8, device=self.device)
+    def draw_tension_lines(self, surface, compression):
+        """Проекция векторов течений жидкости в системе отсчета камеры"""
+        step_x = WIDTH // 24
+        step_y = HEIGHT // 24
         
-        pos_x = self.positions[:, 0].view(-1, 1, 1)
-        pos_y = self.positions[:, 1].view(-1, 1, 1)
-        phases = self.phases.view(1, -1)
-        chiralities = self.chiralities.view(1, -1)
+        # Получаем аффинную сетку вида камеры
+        theta = -self.player_angle
+        cos_t = math.cos(theta)
+        sin_t = math.sin(theta)
         
-        radii = torch.ones(self.total_vortices, device=self.device) * 24.0
-        radii[:16] = 30.0 + (1.0 - compression) * 15.0
-        # Выделяем Опорный Пин 0 (Нос аватара) — он всегда горит золотом на севере платы
-        radii[0] = 55.0 
-        radii_g = radii.view(1, -1)
+        px_norm = (self.player_pos[0] / WIDTH) * 2.0 - 1.0
+        py_norm = (self.player_pos[1] / HEIGHT) * 2.0 - 1.0
         
-        # Fast GEMM на тензорных ядрах
-        V_sq = torch.sum(self.positions**2, dim=1, keepdim=True).T
-        D2 = self.P_sq + V_sq - 2.0 * torch.matmul(self.P_grid, self.positions.T)
-        dist = torch.sqrt(torch.clamp(D2, 1e-5))
+        M = torch.tensor([[
+            [cos_t, -sin_t, px_norm],
+            [sin_t,  cos_t, py_norm]
+        ]], dtype=torch.float32, device=self.device)
         
-        w = 1.0 / (D2 + 0.1)
+        grid = F.affine_grid(M, size=(1, 1, self.res, self.res), align_corners=True)
+        cam_u = F.grid_sample(self.u, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
+        cam_v = F.grid_sample(self.v, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
         
-        # Чтение координат из P_grid
-        dy = self.P_grid[:, 1].unsqueeze(1) - self.positions[:, 1].unsqueeze(0)
-        dx = self.P_grid[:, 0].unsqueeze(1) - self.positions[:, 0].unsqueeze(0)
-        angle = torch.atan2(dy, dx)
+        u_cpu = cam_u[0, 0].cpu().numpy()
+        v_cpu = cam_v[0, 0].cpu().numpy()
         
-        vortex_phases = chiralities * angle + phases
+        # Поворачиваем сами вектора скоростей в систему координат камеры
+        cos_r = math.cos(-self.player_angle)
+        sin_r = math.sin(-self.player_angle)
         
-        sum_x = torch.sum(torch.cos(vortex_phases) * w * torch.exp(-dist / radii_g), dim=1)
-        sum_y = torch.sum(torch.sin(vortex_phases) * w * torch.exp(-dist / radii_g), dim=1)
-        sum_weight = torch.sum(w, dim=1)
-        
-        avg_x = sum_x / sum_weight
-        avg_y = sum_y / sum_weight
-        
-        final_phase = torch.atan2(avg_y, avg_x)
-        phase_norm = (final_phase + math.pi) / (2.0 * math.pi)
-        magnitude = torch.sqrt(avg_x**2 + avg_y**2)
-        
-        # СЛОИ ПРОЗРАЧНОСТИ (ПОЛУПРОЗРАЧНЫЙ ПОЛ)
-        cx = phase_norm
-        cy = 1.0 
-        cz = torch.clamp(magnitude * 0.12, 0.0, 1.0) # Прозрачный пол
-        
-        t_r = torch.remainder(cx * 6.0 + 0.0, 6.0)
-        t_g = torch.remainder(cx * 6.0 + 4.0, 6.0)
-        t_b = torch.remainder(cx * 6.0 + 2.0, 6.0)
-        
-        r = torch.clamp(torch.abs(t_r - 3.0) - 1.0, 0.0, 1.0)
-        g = torch.clamp(torch.abs(t_g - 3.0) - 1.0, 0.0, 1.0)
-        b = torch.clamp(torch.abs(t_b - 3.0) - 1.0, 0.0, 1.0)
-        
-        factor = 1.0 - torch.abs(2.0 * cz - 1.0)
-        r_final = cz + cy * (r - 0.5) * factor
-        g_final = cz + cy * (g - 0.5) * factor
-        b_final = cz + cy * (b - 0.5) * factor
-        
-        # Бегущие волны фазы пола
-        contour_phase = phase_norm * 8.0 - time_sec * 4.0
-        contour = contour_phase - torch.floor(contour_phase)
-        t_a = torch.clamp((contour - 0.85) / 0.15, 0.0, 1.0)
-        t_b = torch.clamp((0.15 - contour) / 0.15, 0.0, 1.0)
-        contour_line = t_a * t_a * (3.0 - 2.0 * t_a) + t_b * t_b * (3.0 - 2.0 * t_b)
-        
-        r_final += contour_line * 0.15 * magnitude
-        g_final += contour_line * 0.15 * magnitude
-        b_final += contour_line * 0.15 * magnitude
-        
-        # Свечение сингулярностей
-        t_s = torch.clamp((0.18 - magnitude) / 0.18, 0.0, 1.0)
-        singularity = t_s * t_s * (3.0 - 2.0 * t_s)
-        
-        vortex_energy_mask = torch.clamp(sum_weight / 5.0, 0.0, 1.0)
-        r_final += singularity * 0.8 * vortex_energy_mask
-
-        # === СОЛИД СЛОЙ СТЕН И АВАТАРА ===
-        wall_dist = dist[:, 16:]
-        min_wall_dist = torch.min(wall_dist, dim=1)[0]
-        wall_core_mask = torch.clamp(1.0 - min_wall_dist / (CELL_SIZE * 0.45), 0.0, 1.0)
-        
-        r_final = torch.max(r_final, wall_core_mask * 0.70)
-        b_final = torch.max(b_final, wall_core_mask * 0.95)
-        g_final = torch.max(g_final, wall_core_mask * compression * 0.3)
-        
-        player_dist = dist[:, :16]
-        min_player_dist = torch.min(player_dist, dim=1)[0]
-        player_core_mask = torch.clamp(1.0 - min_player_dist / 16.0, 0.0, 1.0)
-        
-        g_final = torch.max(g_final, player_core_mask * 0.80)
-        b_final = torch.max(b_final, player_core_mask * 0.95)
-
-        ref_dist = dist[:, 0]
-        ref_core_mask = torch.clamp(1.0 - ref_dist / 22.0, 0.0, 1.0)
-        r_final = torch.max(r_final, ref_core_mask * 1.0)
-        g_final = torch.max(g_final, ref_core_mask * 0.75)
-        
-        # Маска захваченных золотых вихрей
-        captured_field = torch.zeros(self.res * self.res, device=self.device)
-        for i in range(self.num_world_nodes):
-            if self.node_captured[i]:
-                dx_c = self.P_grid[:, 0] - self.positions[16+i, 0]
-                dy_c = self.P_grid[:, 1] - self.positions[16+i, 1]
-                dist_c = torch.sqrt(dx_c**2 + dy_c**2)
-                mask_c = torch.clamp(1.0 - dist_c / 20.0, 0.0, 1.0)
-                captured_field = torch.max(captured_field, mask_c)
+        for i in range(1, 23):
+            for j in range(1, 23):
+                grid_y = int(i * (self.res / 24))
+                grid_x = int(j * (self.res / 24))
                 
-        r_final += captured_field * 0.6
-        g_final += captured_field * 0.5
+                vx_world = float(u_cpu[grid_y, grid_x])
+                vy_world = float(v_cpu[grid_y, grid_x])
+                
+                # Локальный вектор скорости на экране
+                vx = vx_world * cos_r - vy_world * sin_r
+                vy = vx_world * sin_r + vy_world * cos_r
+                
+                speed = math.hypot(vx, vy)
+                if speed > 0.5:
+                    max_draw_len = 15.0
+                    if speed > max_draw_len:
+                        draw_vx = (vx / speed) * max_draw_len
+                        draw_vy = (vy / speed) * max_draw_len
+                    else:
+                        draw_vx = vx
+                        draw_vy = vy
+                    
+                    start_x = j * step_x
+                    start_y = i * step_y
+                    end_x = start_x + draw_vx * 1.5
+                    end_y = start_y + draw_vy * 1.5
+                    
+                    # Игнорируем невалидные/взорвавшиеся координаты отрисовки
+                    if not (math.isfinite(end_x) and math.isfinite(end_y)):
+                        continue
+                    
+                    col_factor = min(1.0, speed / 40.0)
+                    color = (0, int(150 + col_factor * 105), int(255 - col_factor * 100))
+                    pygame.draw.line(surface, color, (start_x, start_y), (int(end_x), int(end_y)), 1)
+
+    def draw_phase_dials(self, surface):
+        """РЕНДЕР ПРИБОРНОЙ ПАНЕЛИ ФАЗОВЫХ СТРЕЛОК ДЛЯ СЕНСОРНОГО РЕЗОНАНСА"""
+        start_x = WIDTH - 180
+        start_y = HEIGHT - 180
+        dial_size = 35
+        gap = 6
         
-        r_img = (torch.clamp(r_final, 0.0, 1.0) * 255).to(torch.uint8).view(self.res, self.res)
-        g_img = (torch.clamp(g_final, 0.0, 1.0) * 255).to(torch.uint8).view(self.res, self.res)
-        b_img = (torch.clamp(b_final, 0.0, 1.0) * 255).to(torch.uint8).view(self.res, self.res)
+        u_cpu = self.u[0, 0].cpu().numpy()
+        v_cpu = self.v[0, 0].cpu().numpy()
         
-        rgb = torch.stack([r_img, g_img, b_img], dim=-1)
+        pygame.draw.rect(surface, (10, 15, 30, 210), (start_x - 10, start_y - 25, 175, 185), border_radius=5)
+        pygame.draw.rect(surface, (0, 255, 255, 80), (start_x - 10, start_y - 25, 175, 185), 1, border_radius=5)
         
-        surf = pygame.surfarray.make_surface(np.transpose(rgb.cpu().numpy(), (1, 0, 2)))
+        font_small = pygame.font.SysFont("Consolas", 10, bold=True)
+        surface.blit(font_small.render("CORTICAL PHASE DIALS", True, (0, 255, 255)), (start_x, start_y - 20))
+        
+        # Получаем фазы течения в области игрока для сравнения
+        p_gx_idx = int(max(0, min(self.res - 1, (self.player_pos[0].item() / WIDTH) * self.res)))
+        p_gy_idx = int(max(0, min(self.res - 1, (self.player_pos[1].item() / HEIGHT) * self.res)))
+        flow_phase = math.atan2(v_cpu[p_gy_idx, p_gx_idx], u_cpu[p_gy_idx, p_gx_idx] + 1e-5)
+        
+        for i in range(16):
+            row = i // 4
+            col = i % 4
+            cx = start_x + col * (dial_size + gap) + dial_size // 2
+            cy = start_y + row * (dial_size + gap) + dial_size // 2
+            
+            pygame.draw.circle(surface, (20, 30, 50), (cx, cy), dial_size // 2)
+            pygame.draw.circle(surface, (0, 255, 255, 50), (cx, cy), dial_size // 2, 1)
+            
+            u_phase = (i * 0.4) % (2 * math.pi)
+            ux = cx + math.cos(u_phase) * (dial_size // 2 - 2)
+            uy = cy + math.sin(u_phase) * (dial_size // 2 - 2)
+            pygame.draw.line(surface, (0, 255, 255), (cx, cy), (int(ux), int(uy)), 2)
+            
+            tx = cx + math.cos(flow_phase) * (dial_size // 2 - 2)
+            ty = cy + math.sin(flow_phase) * (dial_size // 2 - 2)
+            pygame.draw.line(surface, (255, 215, 0), (cx, cy), (int(tx), int(ty)), 1)
+            
+            surface.blit(font_small.render(str(i), True, (130, 150, 180)), (cx - 4, cy - 5))
+
+    def render_field(self):
+        """Рендер поля плотности цвета и препятствий с переносом в координаты камеры"""
+        # Угол и смещение для вида от лица игрока
+        theta = -self.player_angle
+        cos_t = math.cos(theta)
+        sin_t = math.sin(theta)
+        
+        px_norm = (self.player_pos[0] / WIDTH) * 2.0 - 1.0
+        py_norm = (self.player_pos[1] / HEIGHT) * 2.0 - 1.0
+        
+        # Аффинная матрица камеры [2, 3]
+        M = torch.tensor([[
+            [cos_t, -sin_t, px_norm],
+            [sin_t,  cos_t, py_norm]
+        ]], dtype=torch.float32, device=self.device)
+        
+        grid = F.affine_grid(M, size=(1, 3, self.res, self.res), align_corners=True)
+        
+        # Переносим плотность и маску препятствий в координаты камеры
+        cam_density = F.grid_sample(self.density, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
+        cam_walls = F.grid_sample(self.wall_density, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
+        cam_player = F.grid_sample(self.player_density, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
+        
+        vis = cam_density[0].permute(1, 2, 0) # Перевод в (H, W, 3)
+        vis = torch.clamp(vis, 0.0, 1.0)
+        
+        # Отрисовка стен: смешиваем цвета течений жидкости со светящимся неоново-розовым гелем стен в камере
+        wall_val = cam_walls[0, 0].unsqueeze(-1) # (H, W, 1)
+        wall_color = torch.tensor([0.9, 0.15, 0.6], device=self.device).view(1, 1, 3) # Насыщенный розово-малиновый неон геля
+        vis = vis * (1.0 - wall_val * 0.94) + wall_color * wall_val * 0.85
+        
+        # === ВЫСОКОКАЧЕСТВЕННАЯ СЛИЗИСТАЯ ВИЗУАЛИЗАЦИЯ (ТЗ) ===
+        player_val = cam_player[0, 0].unsqueeze(-1) # (H, W, 1)
+        
+        # 1. Мягкая внутренняя цитоплазма (светящееся бирюзовое желе)
+        jelly_color = torch.tensor([0.0, 0.45, 0.65], device=self.device).view(1, 1, 3)
+        
+        # 2. Яркая неоновая клеточная мембрана (резкий, сильный циановый ободок на границе)
+        membrane_color = torch.tensor([0.2, 1.0, 0.95], device=self.device).view(1, 1, 3)
+        membrane_mask = torch.clamp(1.0 - torch.abs(player_val - 0.18) / 0.08, 0.0, 1.0)
+        membrane_mask = membrane_mask ** 3.0 # Резкая форма границы
+        
+        # Смешиваем слои на фоне цветного поля течений
+        vis = vis * (1.0 - player_val * 0.6) + jelly_color * player_val * 0.6
+        vis = vis * (1.0 - membrane_mask * 0.8) + membrane_color * membrane_mask * 0.95
+        
+        # Дополнительная отрисовка оригинального (целевого) каркаса лабиринта в виде тусклой фиолетовой голограммы
+        cam_orig = F.grid_sample(self.orig_obstacles, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
+        orig_val = cam_orig[0, 0].unsqueeze(-1)
+        vis = torch.where(orig_val > 0.5, vis * 0.45 + torch.tensor([0.22, 0.05, 0.5], device=self.device) * 0.55, vis)
+        
+        rgb = (vis * 255).to(torch.uint8).cpu().numpy()
+        
+        # Генерация pygame surface
+        surf = pygame.surfarray.make_surface(np.transpose(rgb, (1, 0, 2)))
         surf = pygame.transform.smoothscale(surf, (WIDTH, HEIGHT))
         return surf
 
@@ -392,7 +519,7 @@ def main():
     pygame.joystick.init()
     
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Spontaneous Phase Vortex Labyrinth")
+    pygame.display.set_caption("Fluid Vortex Labyrinth")
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("Consolas", 12, bold=True)
     
@@ -409,22 +536,22 @@ def main():
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     arena = PurePhaseVortexLabyrinth(device)
-    ui_compression = 1.0
+    ui_compression = 0.0
 
     running = True
     while running:
         dt = clock.tick(60) / 1000.0
+        dt = min(0.032, dt)  # Предохранитель (CFL) от скачков кадра на старте и лагов окна
         time_sec = pygame.time.get_ticks() / 1000.0
         
         for event in pygame.event.get():
             if event.type == pygame.QUIT: running = False
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_1: arena.cfg['intent_gain'] = max(100, arena.cfg['intent_gain'] - 100)
-                if event.key == pygame.K_2: arena.cfg['intent_gain'] += 100
-                if event.key == pygame.K_3: arena.cfg['torque_gain'] = max(0.01, arena.cfg['torque_gain'] - 0.02)
-                if event.key == pygame.K_4: arena.cfg['torque_gain'] += 0.02
-                if event.key == pygame.K_5: arena.cfg['eeg_smooth'] = max(0.80, arena.cfg['eeg_smooth'] - 0.01)
-                if event.key == pygame.K_6: arena.cfg['eeg_smooth'] = min(0.99, arena.cfg['eeg_smooth'] + 0.01)
+                # Регулировка чувствительности вихревого вращения на клавиши 1 и 2
+                if event.key == pygame.K_1:
+                    arena.cfg['vorticity_sensitivity'] = max(0.0, arena.cfg['vorticity_sensitivity'] - 0.05)
+                if event.key == pygame.K_2:
+                    arena.cfg['vorticity_sensitivity'] = min(2.0, arena.cfg['vorticity_sensitivity'] + 0.05)
 
         keys = pygame.key.get_pressed()
         if keys[pygame.K_SPACE]:
@@ -432,20 +559,17 @@ def main():
         else:
             ui_compression = max(0.0, ui_compression - dt * 2.0)
 
-        if len(joysticks) > 0 and joysticks[0].get_numaxes() >= 5:
-            ui_compression = (joysticks[0].get_axis(4) + 1.0) / 2.0
-
-        compression = ui_compression
-
+        # Вычисляем активность входных сигналов
+        is_real_data = False
         eeg_vx, eeg_vy, eeg_tq = 0.0, 0.0, 0.0
         eeg_phases = None
         
         if HAS_NEURO:
             active_slots = [i for i in range(5) if driver.workers[i].is_connected or any(v == i for v in driver.lsl_inlets.values())]
-            is_real = len(active_slots) > 0
-            C = len(active_slots) * 16 if is_real else 16
+            is_real_data = len(active_slots) > 0
+            C = len(active_slots) * 16 if is_real_data else 16
 
-            if is_real:
+            if is_real_data:
                 for slot_idx in active_slots:
                     q = driver.queues[slot_idx]
                     while len(q) > 0:
@@ -456,43 +580,69 @@ def main():
 
             _, _, phases_gpu, vx, vy, tq, _, _ = neuro_engine.get_predictive_ciplv(C)
             eeg_phases = phases_gpu[:16]
-            eeg_vx = vx.item()
-            eeg_vy = -vy.item() 
-            eeg_tq = tq.item()
+            # Нормируем сырые ЭЭГ данные к безопасному диапазону [-1.0, 1.0] для исключения заноса и вращения
+            eeg_vx = vx.item() * 0.012
+            eeg_vy = -vy.item() * 0.012
+            eeg_tq = tq.item() * 0.012
         else:
-            if keys[pygame.K_LEFT] or keys[pygame.K_a]: eeg_vx -= 1.0
-            if keys[pygame.K_RIGHT] or keys[pygame.K_d]: eeg_vx += 1.0
-            if keys[pygame.K_UP] or keys[pygame.K_w]: eeg_vy -= 1.0
-            if keys[pygame.K_DOWN] or keys[pygame.K_s]: eeg_vy += 1.0
-            if keys[pygame.K_q]: eeg_tq -= 1.0
-            if keys[pygame.K_e]: eeg_tq += 1.0
+            # В режиме эмуляции считаем систему активной только когда НАЖАТЫ клавиши
+            emul_active = any(keys[k] for k in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN, pygame.K_a, pygame.K_d, pygame.K_w, pygame.K_s, pygame.K_q, pygame.K_e])
+            is_real_data = emul_active
             
-            eeg_phases = (torch.arange(16, device=device) * 0.4 + time_sec * 6.0) % (2 * math.pi)
+            if emul_active:
+                if keys[pygame.K_LEFT] or keys[pygame.K_a]: eeg_vx -= 1.0
+                if keys[pygame.K_RIGHT] or keys[pygame.K_d]: eeg_vx += 1.0
+                if keys[pygame.K_UP] or keys[pygame.K_w]: eeg_vy -= 1.0
+                if keys[pygame.K_DOWN] or keys[pygame.K_s]: eeg_vy += 1.0
+                if keys[pygame.K_q]: eeg_tq -= 1.0
+                if keys[pygame.K_e]: eeg_tq += 1.0
+            
+            # Эмулятор частоты 24 Гц (Бета-ритм) [2]
+            eeg_phases = (torch.arange(16, device=device) * 0.4 + time_sec * 24.0 * 2 * math.pi) % (2 * math.pi)
 
-        # Вычисляем относительную физику по направлению взгляда
-        scale = arena.step(None, compression, dt, time_sec, eeg_vx, eeg_vy, eeg_tq, eeg_phases)
+        if len(joysticks) > 0 and joysticks[0].get_numaxes() >= 5:
+            ui_compression = (joysticks[0].get_axis(4) + 1.0) / 2.0
+            gp_active = any(abs(joysticks[0].get_axis(a)) > 0.05 for a in range(joysticks[0].get_numaxes()))
+            is_real_data = is_real_data or gp_active
+
+        compression = ui_compression
+        scale = 1.5 + (1.0 - compression) * 5.0
+
+        # Численный шаг физики и газодинамики жидкости
+        arena.step(dt, time_sec, eeg_vx, eeg_vy, eeg_tq, eeg_phases, is_real_data, compression, scale)
         
-        # === ГЕНЕРАЦИЯ ПОЛНОГО ПОЛЯ НА GPU ===
-        bg_surface = arena.render_field(compression, time_sec)
-        
-        # Вывод на экран (НИ ОДНОГО КРУЖОЧКА, НИ ОДНОЙ ЛИНИИ)
+        # Рендеринг заднего плана и течений (сдвинутых и повернутых на GPU)
+        bg_surface = arena.render_field()
         screen.blit(bg_surface, (0, 0))
 
-        # Отрисовка пульсирующей ауры вокруг твоего аватара в центре экрана
-        pygame.draw.circle(screen, (0, 255, 255), (WIDTH // 2, HEIGHT // 2), 80, 1)
+        # Оверлей векторов сил (трансформированных под камеру)
+        arena.draw_tension_lines(screen, compression)
 
-        # === ПОЛУПРОЗРАЧНЫЙ СТЕКЛЯННЫЙ UI ===
+        # Оверлей электродов (зафиксирован на экране и упруго деформируемый)
+        arena.draw_electrode_sensors(screen)
+
+        # Панель фазовых приборов
+        arena.draw_phase_dials(screen)
+
+        # Отрисовка аватара игрока точно в центре экрана, всегда развернутого ВВЕРХ
+        px_val = WIDTH // 2
+        py_val = HEIGHT // 2
+        
+        # Силуэт корабля (направлен вверх к верхней кромке монитора)
+        pygame.draw.circle(screen, (255, 255, 255), (px_val, py_val), 14, 2)
+        pygame.draw.line(screen, (0, 255, 255), (px_val, py_val), (px_val, py_val - 18), 3) # Курсовой указатель вперед (вверх)
+        pygame.draw.circle(screen, (0, 255, 255), (px_val, py_val), 6)
+
+        # UI
         ui_surf = pygame.Surface((450, 95), pygame.SRCALPHA)
         ui_surf.fill((10, 15, 30, 140)) 
         pygame.draw.rect(ui_surf, (0, 255, 255, 60), (0, 0, 450, 95), 1) 
         screen.blit(ui_surf, (10, 10))
         
-        captured_count = torch.sum(arena.node_captured).item()
-        
-        screen.blit(font.render(f"COMPRESSION (Левый Триггер): {(compression*100):.0f}%", True, (255, 255, 255)), (20, 20))
-        screen.blit(font.render(f"ЗАХВАЧЕНО ВИХРЕЙ ИЗ 1000: {captured_count:.0f} / 1000 (Цель: 700)", True, (255, 200, 0)), (20, 40))
-        screen.blit(font.render(f"[1 / 2] Чувствительность ЭЭГ: {arena.cfg['intent_gain']:.0f}", True, (0, 255, 200)), (20, 60))
-        screen.blit(font.render(f"ЭЭГ Сигнал: {'АКТИВЕН (BLE/LSL)' if HAS_NEURO else 'ЭМУЛЯТОР (WASD + Q/E)'}", True, (0, 255, 0) if HAS_NEURO else (255, 100, 100)), (20, 75))
+        screen.blit(font.render(f"FLUID INJECTION COMPRESSION: {(compression*100):.0f}%", True, (255, 255, 255)), (20, 20))
+        screen.blit(font.render("ЦЕЛЬ: Пробиться сквозь течения и совершить побег за внешнее кольцо лабиринта", True, (255, 200, 0)), (20, 40))
+        screen.blit(font.render(f"[1 / 2] ЧУВСТВИТЕЛЬНОСТЬ ВИХРЕЙ (Vorticity Sens): {arena.cfg['vorticity_sensitivity']:.2f}", True, (0, 255, 200)), (20, 60))
+        screen.blit(font.render(f"Связь ЭЭГ: {'АКТИВНА' if is_real_data else 'ПОКОЙ (Используйте WASD/Стрелки)'}", True, (0, 255, 0) if is_real_data else (150, 150, 150)), (20, 75))
 
         pygame.display.flip()
 
