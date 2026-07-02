@@ -24,6 +24,73 @@ except ImportError:
 
 WIDTH, HEIGHT = 800, 800
 COMPUTE_RES = 128  # Сетка 128x128 для численного решения уравнений Навье-Стокса (Stable Fluids)
+ZOOM_OUT_FACTOR = 1.35  # Коэффициент отдаления камеры, чтобы видеть весь лабиринт целиком при вращении
+
+class PythonMaze:
+    def __init__(self, dim=11):
+        self.dim = dim
+        self.grid = np.ones((dim, dim), dtype=np.int32)
+        
+        attempts = 0
+        is_valid = False
+        best_exit = None
+        best_grid = None
+        
+        while not is_valid and attempts < 200:
+            attempts += 1
+            self.grid.fill(1)
+            self.gen(1, 1)
+            
+            exit_params = self.find_hardest_exit()
+            if best_exit is None or (exit_params['d'] + exit_params['turns'] > best_exit['d'] + best_exit['turns']):
+                best_exit = exit_params
+                best_grid = np.copy(self.grid)
+            
+            if exit_params['d'] >= 20 and exit_params['turns'] >= 5:
+                is_valid = True
+        
+        self.grid = best_grid
+        self.grid[best_exit['y']][best_exit['x']] = 2  # 2 - это Клетка Выхода/Цели
+        self.optimal_dist = best_exit['d']
+        
+    def gen(self, x, y):
+        self.grid[y][x] = 0
+        dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]]
+        random.shuffle(dirs)
+        for dx, dy in dirs:
+            nx, ny = x + dx * 2, y + dy * 2
+            if nx > 0 and nx < self.dim - 1 and ny > 0 and ny < self.dim - 1:
+                if self.grid[ny][nx] == 1:
+                    self.grid[y + dy][x + dx] = 0
+                    self.gen(nx, ny)
+                    
+    def find_hardest_exit(self):
+        q = [{'x': 1, 'y': 1, 'd': 0, 'dx': 0, 'dy': 0, 'turns': 0}]
+        visited = np.zeros((self.dim, self.dim), dtype=bool)
+        visited[1][1] = True
+        best = {'x': 1, 'y': 1, 'd': 0, 'turns': 0}
+        max_score = 0
+        
+        while q:
+            curr = q.pop(0)
+            score = curr['d'] + curr['turns'] * 3
+            if score > max_score and (curr['x'] != 1 or curr['y'] != 1):
+                max_score = score
+                best = curr
+                
+            for dx, dy in [[0, 1], [0, -1], [1, 0], [-1, 0]]:
+                nx, ny = curr['x'] + dx, curr['y'] + dy
+                if nx > 0 and nx < self.dim - 1 and ny > 0 and ny < self.dim - 1:
+                    if not visited[ny][nx] and self.grid[ny][nx] == 0:
+                        visited[ny][nx] = True
+                        is_turn = (curr['dx'] != 0 or curr['dy'] != 0) and (curr['dx'] != dx or curr['dy'] != dy)
+                        q.append({
+                            'x': nx, 'y': ny,
+                            'd': curr['d'] + 1,
+                            'dx': dx, 'dy': dy,
+                            'turns': curr['turns'] + (1 if is_turn else 0)
+                        })
+        return best
 
 class PurePhaseVortexLabyrinth:
     def __init__(self, device):
@@ -64,35 +131,52 @@ class PurePhaseVortexLabyrinth:
         # Динамические масштабы упругого сжатия цитоскелета для каждого из 16 ядер
         self.current_pin_scales = torch.ones(16, device=self.device)
         
-        # Статический каркас лабиринта и динамическое поле неньютоновского геля стен
+        # Процедурный лабиринт 1-в-1 из Нейрокультивации
+        self.maze = PythonMaze(11)
+        self.goal_cell = (1, 1)
+        
         self.orig_obstacles = self.init_obstacles()
         self.wall_density = self.orig_obstacles.clone() # Очень прочные, но деформируемые давлением стены
         
-        # Аватар игрока (Lander) — позиция и угол хранятся в мировом пространстве
-        self.player_pos = torch.tensor([WIDTH / 2.0, HEIGHT / 2.0], dtype=torch.float32, device=self.device)
+        # Точный спавн в ячейке (1.5, 1.5) сжатого лабиринта
+        cell_pixel_w = 640.0 / self.maze.dim
+        spawn_pos = 80.0 + 1.5 * cell_pixel_w
+        self.player_pos = torch.tensor([spawn_pos, spawn_pos], dtype=torch.float32, device=self.device)
         self.player_angle = 0.0 # Угол поворота аватара в радианах
         
     def init_obstacles(self):
         obstacles = torch.zeros((1, 1, self.res, self.res), device=self.device)
-        r = torch.sqrt(self.grid_x**2 + self.grid_y**2)
-        theta = torch.atan2(self.grid_y, self.grid_x)
+        dim = self.maze.dim
         
-        # 3 очень плотных концентрических барьера-кольца толщиной 0.10 (~40 пикселей)
-        rings_cfg = [
-            {"r_min": 0.18, "r_max": 0.28, "gap_start": -0.5, "gap_end": 0.5}, # Толщина 0.10
-            {"r_min": 0.48, "r_max": 0.58, "gap_start": 1.2,  "gap_end": 2.2},  # Толщина 0.10
-            {"r_min": 0.78, "r_max": 0.88, "gap_start": -2.3, "gap_end": -1.3}  # Толщина 0.10
-        ]
-        
-        for ring in rings_cfg:
-            ring_mask = (r >= ring["r_min"]) & (r <= ring["r_max"])
-            gap_mask = (theta >= ring["gap_start"]) & (theta <= ring["gap_end"])
-            obstacles[0, 0, ring_mask & ~gap_mask] = 1.0
+        # Поиск цели в лабиринте
+        goal_rows, goal_cols = np.where(self.maze.grid == 2)
+        if len(goal_rows) > 0:
+            self.goal_cell = (goal_cols[0], goal_rows[0])
+        else:
+            self.goal_cell = (dim - 2, dim - 2)
             
+        maze_tensor = torch.tensor(self.maze.grid, device=self.device)
+        
+        # Отображение 11x11 сетки лабиринта на центральную область [-0.8, 0.8] матрицы Навье-Стокса
+        scale_limit = 0.8
+        col_idx = ((self.grid_x + scale_limit) / (2.0 * scale_limit) * dim).long().clamp(0, dim - 1)
+        row_idx = ((self.grid_y + scale_limit) / (2.0 * scale_limit) * dim).long().clamp(0, dim - 1)
+        
+        # Маска, проверяющая нахождение внутри границ лабиринта
+        within_bounds = (torch.abs(self.grid_x) <= scale_limit) & (torch.abs(self.grid_y) <= scale_limit)
+        
+        # Устанавливаем только стены (значение 1) в качестве препятствий. Клетка цели (2) проходима.
+        obstacles[0, 0, within_bounds] = torch.where(maze_tensor[row_idx[within_bounds], col_idx[within_bounds]] == 1, 1.0, 0.0)
+        
         return obstacles
 
     def reset_world(self):
-        self.player_pos.copy_(torch.tensor([WIDTH / 2.0, HEIGHT / 2.0], device=self.device))
+        self.maze = PythonMaze(11)
+        self.orig_obstacles = self.init_obstacles()
+        
+        cell_pixel_w = 640.0 / self.maze.dim
+        spawn_pos = 80.0 + 1.5 * cell_pixel_w
+        self.player_pos.copy_(torch.tensor([spawn_pos, spawn_pos], device=self.device))
         self.player_angle = 0.0
         self.u.zero_()
         self.v.zero_()
@@ -181,6 +265,7 @@ class PurePhaseVortexLabyrinth:
             )
             
             # === ДИНАМИЧЕСКИЙ ЦИТОСКЕЛЕТ СЛАЙМА ===
+            # Для каждого из 16 ядер рассчитываем уровень сжатия, чтобы они не заходили в стены
             self.current_pin_scales = torch.ones(16, device=self.device) * scale
             for i in range(16):
                 # Проверяем упругую деформацию луча скелета к центру
@@ -372,13 +457,15 @@ class PurePhaseVortexLabyrinth:
                 self.player_angle += self.smooth_vorticity * dt * self.cfg['vorticity_sensitivity']
                 self.player_angle = (self.player_angle + math.pi) % (2.0 * math.pi) - math.pi
 
-            # === ПОБЕГ ЗА ПРЕДЕЛЫ ЛАБИРИНТА ===
-            dx_c = self.player_pos[0] - WIDTH / 2.0
-            dy_c = self.player_pos[1] - HEIGHT / 2.0
-            r_norm = torch.sqrt(dx_c**2 + dy_c**2) / 400.0 # Нормализованное расстояние от центра
+            # === УСЛОВИЕ ПОБЕДЫ (1-в-1 с Нейрокультивацией) ===
+            # Определяем ячейку, в которой находится центр масс слайма
+            px_cell = int((self.player_pos[0].item() - 80.0) / (640.0 / self.maze.dim))
+            py_cell = int((self.player_pos[1].item() - 80.0) / (640.0 / self.maze.dim))
             
-            if r_norm.item() > 0.89: # Успешный выход за пределы самого внешнего кольца (r_max = 0.88)!
-                self.reset_world()
+            if 0 <= px_cell < self.maze.dim and 0 <= py_cell < self.maze.dim:
+                if self.maze.grid[py_cell][px_cell] == 2:
+                    # Победа! Перегенерируем лабиринт и возвращаем на спавн
+                    self.reset_world()
         except Exception as e:
             print("[CRITICAL EXCEPTION IN ARENA.STEP]:")
             traceback.print_exc()
@@ -386,7 +473,7 @@ class PurePhaseVortexLabyrinth:
             sys.exit()
 
     def draw_electrode_sensors(self, surface):
-        """Отрисовка позиций 16 сухих электродов FreeEEG16, зафиксированных на экране и динамически сжимающихся"""
+        """Отрисовка позиций 16 сухих электродов FreeEEG16, зафиксированных на экране"""
         for i in range(16):
             pin_scale = self.current_pin_scales[i].item()
             sx = WIDTH / 2.0 + self.pin_x[i].item() * pin_scale
@@ -395,113 +482,66 @@ class PurePhaseVortexLabyrinth:
             pygame.draw.circle(surface, (0, 255, 255), (int(sx), int(sy)), 2)
 
     def draw_tension_lines(self, surface, compression):
-        """Проекция векторов течений жидкости в системе отсчета камеры"""
-        step_x = WIDTH // 24
-        step_y = HEIGHT // 24
-        
-        # Получаем аффинную сетку вида камеры
-        theta = -self.player_angle
-        cos_t = math.cos(theta)
-        sin_t = math.sin(theta)
-        
-        px_norm = (self.player_pos[0] / WIDTH) * 2.0 - 1.0
-        py_norm = (self.player_pos[1] / HEIGHT) * 2.0 - 1.0
-        
-        M = torch.tensor([[
-            [cos_t, -sin_t, px_norm],
-            [sin_t,  cos_t, py_norm]
-        ]], dtype=torch.float32, device=self.device)
-        
-        grid = F.affine_grid(M, size=(1, 1, self.res, self.res), align_corners=True)
-        cam_u = F.grid_sample(self.u, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
-        cam_v = F.grid_sample(self.v, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
-        
-        u_cpu = cam_u[0, 0].cpu().numpy()
-        v_cpu = cam_v[0, 0].cpu().numpy()
-        
-        # Поворачиваем сами вектора скоростей в систему координат камеры
-        cos_r = math.cos(-self.player_angle)
-        sin_r = math.sin(-self.player_angle)
-        
-        for i in range(1, 23):
-            for j in range(1, 23):
-                grid_y = int(i * (self.res / 24))
-                grid_x = int(j * (self.res / 24))
-                
-                vx_world = float(u_cpu[grid_y, grid_x])
-                vy_world = float(v_cpu[grid_y, grid_x])
-                
-                # Локальный вектор скорости на экране
-                vx = vx_world * cos_r - vy_world * sin_r
-                vy = vx_world * sin_r + vy_world * cos_r
-                
-                speed = math.hypot(vx, vy)
-                if speed > 0.5:
-                    max_draw_len = 15.0
-                    if speed > max_draw_len:
-                        draw_vx = (vx / speed) * max_draw_len
-                        draw_vy = (vy / speed) * max_draw_len
-                    else:
-                        draw_vx = vx
-                        draw_vy = vy
-                    
-                    start_x = j * step_x
-                    start_y = i * step_y
-                    end_x = start_x + draw_vx * 1.5
-                    end_y = start_y + draw_vy * 1.5
-                    
-                    # Игнорируем невалидные/взорвавшиеся координаты отрисовки
-                    if not (math.isfinite(end_x) and math.isfinite(end_y)):
-                        continue
-                    
-                    col_factor = min(1.0, speed / 40.0)
-                    color = (0, int(150 + col_factor * 105), int(255 - col_factor * 100))
-                    pygame.draw.line(surface, color, (start_x, start_y), (int(end_x), int(end_y)), 1)
-
-    def draw_phase_dials(self, surface):
-        """РЕНДЕР ПРИБОРНОЙ ПАНЕЛИ ФАЗОВЫХ СТРЕЛОК ДЛЯ СЕНСОРНОГО РЕЗОНАНСА"""
-        start_x = WIDTH - 180
-        start_y = HEIGHT - 180
-        dial_size = 35
-        gap = 6
-        
+        """Проекция векторов течений жидкости в системе отсчета камеры с учетом ZOOM_OUT_FACTOR и вращения"""
         u_cpu = self.u[0, 0].cpu().numpy()
         v_cpu = self.v[0, 0].cpu().numpy()
         
-        pygame.draw.rect(surface, (10, 15, 30, 210), (start_x - 10, start_y - 25, 175, 185), border_radius=5)
-        pygame.draw.rect(surface, (0, 255, 255, 80), (start_x - 10, start_y - 25, 175, 185), 1, border_radius=5)
+        theta = -self.player_angle
+        cos_t = math.cos(theta)
+        sin_t = math.sin(theta)
         
-        font_small = pygame.font.SysFont("Consolas", 10, bold=True)
-        surface.blit(font_small.render("CORTICAL PHASE DIALS", True, (0, 255, 255)), (start_x, start_y - 20))
+        # Шаг сетки для выборки векторов из физической сетки 128х128
+        step = self.res // 24
         
-        # Получаем фазы течения в области игрока для сравнения
-        p_gx_idx = int(max(0, min(self.res - 1, (self.player_pos[0].item() / WIDTH) * self.res)))
-        p_gy_idx = int(max(0, min(self.res - 1, (self.player_pos[1].item() / HEIGHT) * self.res)))
-        flow_phase = math.atan2(v_cpu[p_gy_idx, p_gx_idx], u_cpu[p_gy_idx, p_gx_idx] + 1e-5)
-        
-        for i in range(16):
-            row = i // 4
-            col = i % 4
-            cx = start_x + col * (dial_size + gap) + dial_size // 2
-            cy = start_y + row * (dial_size + gap) + dial_size // 2
-            
-            pygame.draw.circle(surface, (20, 30, 50), (cx, cy), dial_size // 2)
-            pygame.draw.circle(surface, (0, 255, 255, 50), (cx, cy), dial_size // 2, 1)
-            
-            u_phase = (i * 0.4) % (2 * math.pi)
-            ux = cx + math.cos(u_phase) * (dial_size // 2 - 2)
-            uy = cy + math.sin(u_phase) * (dial_size // 2 - 2)
-            pygame.draw.line(surface, (0, 255, 255), (cx, cy), (int(ux), int(uy)), 2)
-            
-            tx = cx + math.cos(flow_phase) * (dial_size // 2 - 2)
-            ty = cy + math.sin(flow_phase) * (dial_size // 2 - 2)
-            pygame.draw.line(surface, (255, 215, 0), (cx, cy), (int(tx), int(ty)), 1)
-            
-            surface.blit(font_small.render(str(i), True, (130, 150, 180)), (cx - 4, cy - 5))
+        for i in range(1, 23):
+            for j in range(1, 23):
+                gy = i * step
+                gx = j * step
+                
+                # Переводим мировые координаты ячейки (0..128) в пиксели (0..800)
+                wx = (gx / float(self.res)) * WIDTH
+                wy = (gy / float(self.res)) * HEIGHT
+                
+                # Вычисляем смещение относительно игрока
+                dx = wx - self.player_pos[0].item()
+                dy = wy - self.player_pos[1].item()
+                
+                # Проецируем точку старта вектора на экран с учетом вращения и отдаления камеры (как стены)
+                sx = WIDTH / 2.0 + (dx * cos_t + dy * sin_t) / ZOOM_OUT_FACTOR
+                sy = HEIGHT / 2.0 + (-dx * sin_t + dy * cos_t) / ZOOM_OUT_FACTOR
+                
+                # Отрисовываем вектор только если он находится в пределах экрана
+                if 0 <= sx <= WIDTH and 0 <= sy <= HEIGHT:
+                    vx_world = float(u_cpu[gy, gx])
+                    vy_world = float(v_cpu[gy, gx])
+                    
+                    # Поворачиваем сам вектор скорости в пространство экрана (под углом камеры)
+                    vx_cam = (vx_world * cos_t + vy_world * sin_t) / ZOOM_OUT_FACTOR
+                    vy_cam = (-vx_world * sin_t + vy_world * cos_t) / ZOOM_OUT_FACTOR
+                    
+                    speed = math.hypot(vx_cam, vy_cam)
+                    if speed > 0.5:
+                        max_draw_len = 15.0
+                        if speed > max_draw_len:
+                            draw_vx = (vx_cam / speed) * max_draw_len
+                            draw_vy = (vy_cam / speed) * max_draw_len
+                        else:
+                            draw_vx = vx_cam
+                            draw_vy = vy_cam
+                        
+                        end_x = sx + draw_vx * 1.5
+                        end_y = sy + draw_vy * 1.5
+                        
+                        if not (math.isfinite(end_x) and math.isfinite(end_y)):
+                            continue
+                        
+                        col_factor = min(1.0, speed / 40.0)
+                        color = (0, int(150 + col_factor * 105), int(255 - col_factor * 100))
+                        pygame.draw.line(surface, color, (int(sx), int(sy)), (int(end_x), int(end_y)), 1)
 
     def render_field(self):
         """Рендер поля плотности цвета и препятствий с переносом в координаты камеры"""
-        # Угол и смещение для вида от лица игрока
+        # Угол и смещение для вида от лица игрока с учетом ZOOM_OUT_FACTOR
         theta = -self.player_angle
         cos_t = math.cos(theta)
         sin_t = math.sin(theta)
@@ -509,10 +549,10 @@ class PurePhaseVortexLabyrinth:
         px_norm = (self.player_pos[0] / WIDTH) * 2.0 - 1.0
         py_norm = (self.player_pos[1] / HEIGHT) * 2.0 - 1.0
         
-        # Аффинная матрица камеры [2, 3]
+        # Аффинная матрица камеры с учетом ZOOM_OUT_FACTOR
         M = torch.tensor([[
-            [cos_t, -sin_t, px_norm],
-            [sin_t,  cos_t, py_norm]
+            [cos_t * ZOOM_OUT_FACTOR, -sin_t * ZOOM_OUT_FACTOR, px_norm],
+            [sin_t * ZOOM_OUT_FACTOR,  cos_t * ZOOM_OUT_FACTOR, py_norm]
         ]], dtype=torch.float32, device=self.device)
         
         grid = F.affine_grid(M, size=(1, 3, self.res, self.res), align_corners=True)
@@ -524,6 +564,10 @@ class PurePhaseVortexLabyrinth:
         
         vis = cam_density[0].permute(1, 2, 0) # Перевод в (H, W, 3)
         vis = torch.clamp(vis, 0.0, 1.0)
+        
+        # ЗАЛИВКА ФОНА УГОЛЬНО-СЕРЫМ ЦВЕТОМ RGB(12,12,12) ВМЕСТО ЧЕРНОГО:
+        # Это полностью отключает Linux chroma-key прозрачность GNOME и скрывает PCB Editor на фоне!
+        vis = torch.where(vis == 0.0, torch.tensor([12.0 / 255.0, 12.0 / 255.0, 12.0 / 255.0], device=self.device), vis)
         
         # Отрисовка стен: смешиваем цвета течений жидкости со светящимся неоново-розовым гелем стен в камере
         wall_val = cam_walls[0, 0].unsqueeze(-1) # (H, W, 1)
@@ -565,7 +609,6 @@ def main():
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption("Fluid Vortex Labyrinth")
         clock = pygame.time.Clock()
-        font = pygame.font.SysFont("Consolas", 12, bold=True)
         
         joysticks = [pygame.joystick.Joystick(i) for i in range(pygame.joystick.get_count())]
         for j in joysticks: j.init()
@@ -653,7 +696,7 @@ def main():
             compression = ui_compression
             scale = 1.5 + (1.0 - compression) * 5.0
 
-            # Численный шаг физики и газодинамики жидкости
+            # Численный шаг физики и газодинамики жидкости с передачей матрицы когерентностей
             arena.step(dt, time_sec, eeg_c0, eeg_vx, eeg_vy, eeg_tq, eeg_phases, is_real_data, compression, scale)
             
             # Рендеринг заднего плана и течений (сдвинутых и повернутых на GPU)
@@ -663,11 +706,28 @@ def main():
             # Оверлей векторов сил (трансформированных под камеру)
             arena.draw_tension_lines(screen, compression)
 
-            # Оверлей электродов (зафиксирован на экране и упруго деформируемый)
+            # Оверлей электродов (зафиксирован на экране вокруг центрального аватара слайма)
             arena.draw_electrode_sensors(screen)
 
-            # Панель фазовых приборов
-            arena.draw_phase_dials(screen)
+            # Отрисовка цели (Зелёной Сферы) в динамической системе координат камеры с учетом ZOOM_OUT_FACTOR
+            cell_pixel_w = 640.0 / arena.maze.dim
+            goal_x = 80.0 + (arena.goal_cell[0] + 0.5) * cell_pixel_w
+            goal_y = 80.0 + (arena.goal_cell[1] + 0.5) * cell_pixel_w
+            
+            dx_goal = goal_x - arena.player_pos[0].item()
+            dy_goal = goal_y - arena.player_pos[1].item()
+            
+            theta = -arena.player_angle
+            cos_t = math.cos(theta)
+            sin_t = math.sin(theta)
+            
+            # Математически точная аффинная проекция на экран с учетом обратной матрицы и ZOOM_OUT_FACTOR
+            sx = WIDTH / 2.0 + (dx_goal * cos_t + dy_goal * sin_t) / ZOOM_OUT_FACTOR
+            sy = HEIGHT / 2.0 + (-dx_goal * sin_t + dy_goal * cos_t) / ZOOM_OUT_FACTOR
+            
+            if 0 <= sx <= WIDTH and 0 <= sy <= HEIGHT:
+                pygame.draw.circle(screen, (0, 255, 100), (int(sx), int(sy)), int(cell_pixel_w * 0.25 / ZOOM_OUT_FACTOR), 0)
+                pygame.draw.circle(screen, (255, 255, 255), (int(sx), int(sy)), int(cell_pixel_w * 0.1 / ZOOM_OUT_FACTOR), 0)
 
             # Отрисовка аватара игрока точно в центре экрана, всегда развернутого ВВЕРХ
             px_val = WIDTH // 2
@@ -677,17 +737,6 @@ def main():
             pygame.draw.circle(screen, (255, 255, 255), (px_val, py_val), 14, 2)
             pygame.draw.line(screen, (0, 255, 255), (px_val, py_val), (px_val, py_val - 18), 3) # Курсовой указатель вперед (вверх)
             pygame.draw.circle(screen, (0, 255, 255), (px_val, py_val), 6)
-
-            # UI
-            ui_surf = pygame.Surface((450, 95), pygame.SRCALPHA)
-            ui_surf.fill((10, 15, 30, 140)) 
-            pygame.draw.rect(ui_surf, (0, 255, 255, 60), (0, 0, 450, 95), 1) 
-            screen.blit(ui_surf, (10, 10))
-            
-            screen.blit(font.render(f"FLUID INJECTION COMPRESSION: {(compression*100):.0f}%", True, (255, 255, 255)), (20, 20))
-            screen.blit(font.render("ЦЕЛЬ: Пробиться сквозь течения и совершить побег за внешнее кольцо лабиринта", True, (255, 200, 0)), (20, 40))
-            screen.blit(font.render(f"[1 / 2] ЧУВСТВИТЕЛЬНОСТЬ ВИХРЕЙ (Vorticity Sens): {arena.cfg['vorticity_sensitivity']:.2f}", True, (0, 255, 200)), (20, 60))
-            screen.blit(font.render(f"Связь ЭЭГ: {'АКТИВНА' if is_real_data else 'ПОКОЙ (Используйте WASD/Стрелки)'}", True, (0, 255, 0) if is_real_data else (150, 150, 150)), (20, 75))
 
             pygame.display.flip()
 
