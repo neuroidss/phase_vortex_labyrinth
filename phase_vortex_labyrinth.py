@@ -45,8 +45,8 @@ def main():
         ui_compression = 0.0
         
         # --- ПАРАМЕТРЫ ИММЕРСИВНОСТИ (Отключены по умолчанию) ---
-        show_lines = True
-        show_sensors = True
+        show_lines = False
+        show_sensors = False
 
         running = True
         while running:
