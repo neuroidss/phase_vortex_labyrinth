@@ -15,7 +15,7 @@ The environment is a continuous `128x128` grid solving the incompressible Navier
 *   **Toroidal Topology:** The pressure and velocity boundary conditions in the Navier-Stokes solver are configured in a periodic, toroidal mode (`mode='circular'`). Fluid flow exiting the right boundary instantly and without loss of momentum enters the left boundary.
 *   **Unconstrained Particle Coordinates:** The absolute coordinates of the slime (`pin_pos`) are calculated in an unconstrained, infinite space (allowing coordinates to grow endlessly, e.g., $x = 15000$). This prevents abrupt camera jumps during wrapping.
 *   **Periodic Mapping & Tiling:** When sampling local fluid velocities, the coordinates of the slime are folded back into the grid boundaries using the modulo operation:
-    $$\vec{u}_{\mathrm{sampled}} = \mathrm{sample\_fluid}(\vec{x}_{\mathrm{slime}} \pmod{\vec{w}})$$
+    $$\vec{u}_{\mathrm{sampled}} = \mathrm{sample\_fluid}(\vec{x}_{\mathrm{slime}} \text{ mod } \vec{w})$$
     This results in a seamless, infinitely tileable representation of the physical world.
 
 ### 2. Holographic BCI Projection (Frequency-to-Physics Mapping)
