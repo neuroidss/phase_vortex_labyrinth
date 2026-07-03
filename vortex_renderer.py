@@ -25,6 +25,9 @@ class VortexRenderer:
         
         grid = F.affine_grid(M, size=(1, 3, arena.res, arena.res), align_corners=True)
         
+        # ТОРОИДАЛЬНЫЙ РЕНДЕР: Тайлим матрицу лабиринта во все стороны бесконечно
+        grid = torch.remainder(grid + 1.0, 2.0) - 1.0
+        
         cam_density = F.grid_sample(arena.density, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
         cam_walls = F.grid_sample(arena.wall_density, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
         cam_player = F.grid_sample(arena.player_density, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
@@ -61,7 +64,10 @@ class VortexRenderer:
             for j in range(1, 23):
                 gy, gx = i * step, j * step
                 wx, wy = (gx / float(arena.res)) * self.WIDTH, (gy / float(arena.res)) * self.HEIGHT
-                dx, dy = wx - arena.player_pos[0].item(), wy - arena.player_pos[1].item()
+                
+                # Короткий путь на Торе
+                dx = (wx - arena.player_pos[0].item() + self.WIDTH/2) % self.WIDTH - self.WIDTH/2
+                dy = (wy - arena.player_pos[1].item() + self.HEIGHT/2) % self.HEIGHT - self.HEIGHT/2
                 
                 sx = self.WIDTH / 2.0 + (dx * cos_t + dy * sin_t) / self.ZOOM
                 sy = self.HEIGHT / 2.0 + (-dx * sin_t + dy * cos_t) / self.ZOOM
@@ -86,12 +92,12 @@ class VortexRenderer:
         theta, cos_t, sin_t = -arena.player_angle, math.cos(-arena.player_angle), math.sin(-arena.player_angle)
         
         for i in range(16):
-            # ЛОР-ФИКС: Захваченные точки не исчезают, а становятся фиолетовыми в центре портала!
             is_cap = arena.pin_captured[i]
             col = (255, 0, 255) if is_cap else (0, 255, 255)
             
             px, py = arena.pin_pos[i, 0].item(), arena.pin_pos[i, 1].item()
-            dx, dy = px - arena.player_pos[0].item(), py - arena.player_pos[1].item()
+            dx = (px - arena.player_pos[0].item() + self.WIDTH/2) % self.WIDTH - self.WIDTH/2
+            dy = (py - arena.player_pos[1].item() + self.HEIGHT/2) % self.HEIGHT - self.HEIGHT/2
             
             sx = self.WIDTH / 2.0 + (dx * cos_t + dy * sin_t) / self.ZOOM
             sy = self.HEIGHT / 2.0 + (-dx * sin_t + dy * cos_t) / self.ZOOM
@@ -100,12 +106,13 @@ class VortexRenderer:
             pygame.draw.circle(surface, col, (int(sx), int(sy)), 2)
 
     def draw_ui(self, surface, arena):
-        # UI (Цель и курсор) рисуются ТОЛЬКО если включен этот слой (по кнопке 'K')
         cell_w = (self.WIDTH * 0.8) / arena.maze.dim
         gx = (self.WIDTH * 0.1) + (arena.goal_cell[0] + 0.5) * cell_w
         gy = (self.HEIGHT * 0.1) + (arena.goal_cell[1] + 0.5) * cell_w
         
-        dx, dy = gx - arena.player_pos[0].item(), gy - arena.player_pos[1].item()
+        dx = (gx - arena.player_pos[0].item() + self.WIDTH/2) % self.WIDTH - self.WIDTH/2
+        dy = (gy - arena.player_pos[1].item() + self.HEIGHT/2) % self.HEIGHT - self.HEIGHT/2
+        
         theta = -arena.player_angle
         sx = self.WIDTH / 2.0 + (dx * math.cos(theta) + dy * math.sin(theta)) / self.ZOOM
         sy = self.HEIGHT / 2.0 + (-dx * math.sin(theta) + dy * math.cos(theta)) / self.ZOOM

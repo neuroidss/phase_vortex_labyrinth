@@ -3,6 +3,7 @@ import pygame
 import torch
 import sys
 import traceback
+import time
 
 try:
     from neuro_driver import RealNeuroDriver
@@ -13,19 +14,26 @@ except ImportError:
 
 from vortex_physics import PhaseVortexArena
 from vortex_renderer import VortexRenderer
+from input_manager import UnifiedInputManager
 
 WIDTH, HEIGHT = 800, 800
 COMPUTE_RES = 128
 ZOOM_OUT_FACTOR = 1.35
+TOURNAMENT_SEED = 202607
 
 def main():
     try:
         pygame.init()
+        pygame.font.init()
         pygame.joystick.init()
         
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption("Fluid Vortex Labyrinth (Immersive Mode)")
+        pygame.display.set_caption("Fluid Vortex Labyrinth (Full-Spectrum Time-Attack)")
         clock = pygame.time.Clock()
+        font = pygame.font.SysFont("Consolas", 28, bold=True)
+        
+        # Инициализируем обособленный модуль управления
+        input_manager = UnifiedInputManager(WIDTH, HEIGHT)
         
         joysticks = [pygame.joystick.Joystick(i) for i in range(pygame.joystick.get_count())]
         for j in joysticks: j.init()
@@ -39,15 +47,15 @@ def main():
         else:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        arena = PhaseVortexArena(device, WIDTH, HEIGHT, COMPUTE_RES)
+        arena = PhaseVortexArena(device, WIDTH, HEIGHT, COMPUTE_RES, seed=TOURNAMENT_SEED)
         renderer = VortexRenderer(WIDTH, HEIGHT, ZOOM_OUT_FACTOR)
         
-        ui_compression = 0.0
-        
-        # --- ПАРАМЕТРЫ ИММЕРСИВНОСТИ (Отключены по умолчанию) ---
         show_lines = False
         show_sensors = False
 
+        run_start_time = time.time()
+        last_finish_time = 0.0
+        
         running = True
         while running:
             dt = min(0.032, clock.tick(60) / 1000.0)
@@ -64,20 +72,16 @@ def main():
                         show_lines = not show_lines
                     if event.key == pygame.K_k:
                         show_sensors = not show_sensors
+                    if event.key == pygame.K_ESCAPE:
+                        # Переключаем захват мыши через менеджер ввода
+                        input_manager.toggle_mouse_lock()
 
-            keys = pygame.key.get_pressed()
-            ui_compression = min(1.0, ui_compression + dt * 2.0) if keys[pygame.K_SPACE] else max(0.0, ui_compression - dt * 2.0)
+            # --- ОПРОС УНИВЕРСАЛЬНОГО ВВОДА ---
+            is_real_data, eeg_vx, eeg_vy, eeg_tq, ui_compression = input_manager.process_inputs(joysticks, dt)
+            eeg_c0_spectrum = None
+            eeg_freqs = None
 
-            is_real_data, eeg_vx, eeg_vy, eeg_tq, eeg_c0 = False, 0.0, 0.0, 0.0, None
-            if any(keys[k] for k in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN, pygame.K_a, pygame.K_d, pygame.K_w, pygame.K_s, pygame.K_q, pygame.K_e]):
-                is_real_data = True
-                if keys[pygame.K_LEFT] or keys[pygame.K_a]: eeg_vx -= 1.0
-                if keys[pygame.K_RIGHT] or keys[pygame.K_d]: eeg_vx += 1.0
-                if keys[pygame.K_UP] or keys[pygame.K_w]: eeg_vy -= 1.0
-                if keys[pygame.K_DOWN] or keys[pygame.K_s]: eeg_vy += 1.0
-                if keys[pygame.K_q]: eeg_tq -= 1.0
-                if keys[pygame.K_e]: eeg_tq += 1.0
-
+            # --- BCI (Прямая проекция всех частот) ---
             if HAS_NEURO:
                 active_slots = [i for i in range(5) if driver.workers[i].is_connected or any(v == i for v in driver.lsl_inlets.values())]
                 if active_slots:
@@ -87,17 +91,26 @@ def main():
                         while len(q) > 0:
                             neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, :-1] = neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, 1:].clone()
                             neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, -1] = torch.tensor(q.popleft())
-                    c0_gpu, _, _, vx, vy, tq, _, _ = neuro_engine.get_predictive_ciplv(len(active_slots) * 16)
-                    eeg_c0 = c0_gpu[:16, :16]
-                    eeg_vx, eeg_vy, eeg_tq = vx.item() * 0.012, -vy.item() * 0.012, tq.item() * 0.012
-
-            if len(joysticks) > 0 and joysticks[0].get_numaxes() >= 5:
-                ui_compression = (joysticks[0].get_axis(4) + 1.0) / 2.0
-                if any(abs(joysticks[0].get_axis(a)) > 0.05 for a in range(joysticks[0].get_numaxes())):
-                    is_real_data = True
+                    
+                    c0_spec, freqs, _, _, _ = neuro_engine.get_predictive_ciplv(len(active_slots) * 16)
+                    eeg_c0_spectrum = c0_spec[:16, :16, :]
+                    eeg_freqs = freqs
+                    # Обнуляем ручные векторы при наличии сигналов мозга
+                    eeg_vx, eeg_vy, eeg_tq = 0.0, 0.0, 0.0
 
             scale = 1.5 + (1.0 - ui_compression) * 5.0
-            arena.step(dt, time_sec, eeg_c0, eeg_vx, eeg_vy, eeg_tq, is_real_data, ui_compression, scale)
+            
+            # ИСПРАВЛЕНО: Считываем количество захваченных нод СТРОГО до шага физики
+            prev_captured = arena.pin_captured.sum().item()
+            
+            arena.step(dt, time_sec, eeg_c0_spectrum, eeg_vx, eeg_vy, eeg_tq, is_real_data, ui_compression, scale, eeg_freqs)
+            new_captured = arena.pin_captured.sum().item()
+            
+            if new_captured == 0 and prev_captured == 16:
+                last_finish_time = time.time() - run_start_time
+                run_start_time = time.time()
+                
+            current_run_time = time.time() - run_start_time
             
             screen.blit(renderer.render_field(arena), (0, 0))
             
@@ -106,6 +119,19 @@ def main():
             if show_sensors:
                 renderer.draw_electrode_sensors(screen, arena)
                 renderer.draw_ui(screen, arena) 
+                
+            time_str = f"TIME: {current_run_time:06.3f}s"
+            shadow = font.render(time_str, True, (0, 0, 0))
+            text = font.render(time_str, True, (0, 255, 200))
+            screen.blit(shadow, (22, 22))
+            screen.blit(text, (20, 20))
+            
+            if last_finish_time > 0:
+                prev_str = f"PREV: {last_finish_time:06.3f}s"
+                p_shadow = font.render(prev_str, True, (0, 0, 0))
+                p_text = font.render(prev_str, True, (150, 150, 150))
+                screen.blit(p_shadow, (22, 52))
+                screen.blit(p_text, (20, 50))
                 
             pygame.display.flip()
 

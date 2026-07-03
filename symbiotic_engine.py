@@ -6,7 +6,6 @@ from implicit_config import COORDS_16_X, COORDS_16_Y, REF_16_X, REF_16_Y
 
 
 def sign(val):
-    """Вспомогательная функция знака числа"""
     return 1.0 if val > 0 else (-1.0 if val < 0 else 0.0)
 
 
@@ -35,15 +34,12 @@ class SymbioticEngineGPU:
         self.debias_matrix = torch.cat([debias for _ in range(5)], dim=1)
         self.dX, self.dY, self.dTQ = self.dX_raw * self.debias_matrix, self.dY_raw * self.debias_matrix, self.dTQ_raw * self.debias_matrix
 
-        # Инициализируем переменные физического состояния игрока прямо на GPU
         self.gpu_player_pos = torch.tensor([1.5, 1.5, 0.0], dtype=torch.float32, device=self.device)
-        self.ctrl_move_x = torch.tensor(0.0, dtype=torch.float32, device=self.device)
-        self.ctrl_move_y = torch.tensor(0.0, dtype=torch.float32, device=self.device)
-        self.ctrl_torque = torch.tensor(0.0, dtype=torch.float32, device=self.device)
-        self.ctrl_drill = torch.tensor(0.0, dtype=torch.float32, device=self.device)
-        self.ctrl_oracle = torch.tensor(0.0, dtype=torch.float32, device=self.device)
         self.player_speed = 3.5
         self.maze_grid_gpu = None
+        
+        # Окно Хенна для STFT, убирающее спектральную утечку частот
+        self.stft_window = torch.hann_window(128, device=self.device)
 
     def set_maze(self, maze):
         self.maze = maze
@@ -52,40 +48,43 @@ class SymbioticEngineGPU:
     def get_predictive_ciplv(self, C):
         self.gpu_eeg_tensor[:C, :].copy_(self.pinned_cpu_buffer[:C, :], non_blocking=True)
         active_eeg_gpu = self.gpu_eeg_tensor[:C, :]
-        T = active_eeg_gpu.shape[1]
-        Xf = torch.fft.fft(active_eeg_gpu, dim=1)
-        freqs = torch.fft.fftfreq(T, d=1.0 / self.fs_eeg, device=self.device)
-        notch_mask = torch.ones(T, device=self.device)
-        notch_mask[(torch.abs(freqs) >= 49.0) & (torch.abs(freqs) <= 51.0)] = 0.0
-        notch_mask[(torch.abs(freqs) >= 99.0) & (torch.abs(freqs) <= 101.0)] = 0.0
-        Xf *= notch_mask.unsqueeze(0)
         
-        power_spec = torch.abs(Xf)**2
-        log_freqs, log_power = torch.log(torch.abs(freqs[4:90])), torch.log(power_spec[:, 4:90] + 1e-8)
-        mean_x, mean_y = torch.mean(log_freqs), torch.mean(log_power, dim=1, keepdim=True)
-        num = torch.sum((log_freqs - mean_x) * (log_power - mean_y), dim=1)
-        den = torch.sum((log_freqs - mean_x)**2)
-        mean_beta_gpu = torch.mean(-(num / (den + 1e-8)))
+        # 1. STFT с окном Хенна для чистейшего спектрометра
+        X = torch.stft(active_eeg_gpu, n_fft=128, hop_length=16, window=self.stft_window, return_complex=True) 
+        stft_freqs = torch.linspace(0, self.fs_eeg / 2.0, X.shape[1], device=self.device)
         
-        h = torch.zeros(T, device=self.device); h[0] = 1; h[1:T//2] = 2
-        phases = torch.angle(torch.fft.ifft(Xf * h.unsqueeze(0), dim=1))
-        inst_freq = phases[:, -1] - phases[:, -2]
-        future_phases = phases[:, -1] + inst_freq * int(self.lag_compensation_sec * self.fs_eeg)
+        # 2. Выбираем ВЕСЬ спектр от 3 Гц до 100 Гц, жестко вырезая сетевой шум 50 Гц (48-52)
+        valid_mask = (stft_freqs >= 3.0) & (stft_freqs <= 100.0) & ~((stft_freqs >= 48.0) & (stft_freqs <= 52.0))
+        X_valid = X[:, valid_mask, :] # [C, ~48 частот, Time]
+        freqs = stft_freqs[valid_mask] # [~48 частот]
         
-        phase_diff = torch.exp(-1j * future_phases).unsqueeze(1) @ torch.exp(-1j * future_phases).unsqueeze(1).conj().T
-        real, imag = torch.real(phase_diff), torch.imag(phase_diff)
-        ciplv_dynamic = (imag * (torch.abs(real) < 0.96).float()) / torch.sqrt(1.0 - (torch.clamp(real, -0.95, 0.95)**2))
-        ciplv_dynamic.fill_diagonal_(0.0)
+        num_frames = X_valid.shape[2]
         
-        c0 = ciplv_dynamic[0:16, 0:16] if C >= 16 else ciplv_dynamic
-        c0_size = c0.shape[0]
-        vx = torch.sum(c0 * self.dX[0:c0_size, 0:c0_size]) * 15.0
-        vy = torch.sum(c0 * self.dY[0:c0_size, 0:c0_size]) * 15.0
-        torque = torch.sum(c0 * self.dTQ[0:c0_size, 0:c0_size]) * 3.0
+        # 3. ciPLV по матричному алгоритму
+        Z = X_valid / (torch.abs(X_valid) + 1e-8) # [C, F, T]
+        Z = Z.permute(1, 0, 2) # [F, C, T] 
         
-        drill_axis = torch.sum(ciplv_dynamic[16:32, 16:32] * self.dY[0:16, 0:16]) * 15.0 if C >= 32 else torch.tensor(0.0, device=self.device)
-        oracle_axis = torch.sum(ciplv_dynamic[32:48, 32:48] * self.dX[0:16, 0:16]) * 15.0 if C >= 48 else torch.tensor(0.0, device=self.device)
-        return ciplv_dynamic, mean_beta_gpu, phases[:, -1].clone(), vx, vy, torque, drill_axis, oracle_axis
+        PLV = torch.bmm(Z, Z.conj().transpose(1, 2)) / num_frames # [F, C, C]
+        
+        Real_PLV = torch.real(PLV)
+        Imag_PLV = torch.imag(PLV)
+        ciPLV = (Imag_PLV * (torch.abs(Real_PLV) < 0.99).float()) / torch.sqrt(1.0 - torch.clamp(Real_PLV, -0.98, 0.98)**2)
+        
+        ciPLV = ciPLV.permute(1, 2, 0) # [C, C, F]
+        
+        # 4. Взвешиваем ciPLV на мощность
+        power = torch.mean(torch.abs(X_valid), dim=2) # [C, F]
+        pair_power = torch.sqrt(power.unsqueeze(1) * power.unsqueeze(0)) # [C, C, F]
+        eeg_c0_spectrum = ciPLV * pair_power * 2.0
+        
+        c0_global = torch.sum(eeg_c0_spectrum, dim=2)
+        c0_size = min(C, 16)
+        c0_sub = c0_global[:c0_size, :c0_size]
+        vx = torch.sum(c0_sub * self.dX[0:c0_size, 0:c0_size]) * 15.0
+        vy = torch.sum(c0_sub * self.dY[0:c0_size, 0:c0_size]) * 15.0
+        torque = torch.sum(c0_sub * self.dTQ[0:c0_size, 0:c0_size]) * 3.0
+        
+        return eeg_c0_spectrum, freqs, vx, vy, torque
 
     def check_collision_axis_gpu(self, tx, ty):
         gx, gy = tx.int(), ty.int()
@@ -94,48 +93,3 @@ class SymbioticEngineGPU:
         if in_bounds:
             is_wall = self.maze_grid_gpu[gy, gx] == 1
         return in_bounds & (~is_wall)
-
-    def move_player_3d_paradigm_gpu(self, move_x, move_y, torque, dt):
-        # Поворот и тригонометрия на GPU
-        self.gpu_player_pos[2] += torque * dt * 2.0
-        self.gpu_player_pos[2] = (self.gpu_player_pos[2] + math.pi) % (2.0 * math.pi) - math.pi
-        
-        forward_speed = -move_y * self.player_speed * 0.2
-        strafe_speed = move_x * self.player_speed * 0.2
-        
-        sin_a = torch.sin(self.gpu_player_pos[2])
-        cos_a = torch.cos(self.gpu_player_pos[2])
-        
-        dx = sin_a * forward_speed + cos_a * strafe_speed
-        dy = -cos_a * forward_speed + sin_a * strafe_speed
-        
-        target_dx = dx * dt
-        target_dy = dy * dt
-        
-        # Фиксированные шаги для субстеппинга на GPU во избежание вызовов .item()
-        sdx = target_dx / 4.0
-        sdy = target_dy / 4.0
-        
-        for _ in range(4):
-            next_x = self.gpu_player_pos[0] + sdx
-            sign_x = torch.sign(sdx)
-            check_x = next_x + sign_x * 0.2
-            
-            can_move_x = self.check_collision_axis_gpu(check_x, self.gpu_player_pos[1])
-            self.gpu_player_pos[0] = torch.where(can_move_x, next_x, self.gpu_player_pos[0])
-            
-            next_y = self.gpu_player_pos[1] + sdy
-            sign_y = torch.sign(sdy)
-            check_y = next_y + sign_y * 0.2
-            
-            can_move_y = self.check_collision_axis_gpu(self.gpu_player_pos[0], check_y)
-            self.gpu_player_pos[1] = torch.where(can_move_y, next_y, self.gpu_player_pos[1])
-
-    def synthesize_crossmodulated_audio(self, ciplv_dynamic, C, frames):
-        if not hasattr(self, '_audio_t_cache') or self._audio_t_cache.shape[1] != frames:
-            self._audio_t_cache = torch.arange(frames, device=self.device).unsqueeze(0) / self.fs_audio
-        freqs, accum = self.all_audio_freqs[:C, :], self.all_audio_phase_accumulators[:C, :]
-        final_waves = (torch.mean(torch.abs(ciplv_dynamic), dim=1, keepdim=True) + 0.1) * torch.sin(2 * math.pi * freqs * self._audio_t_cache + accum + torch.matmul(ciplv_dynamic, torch.sin(2 * math.pi * freqs * self._audio_t_cache + accum)) * 2.5)
-        self.all_audio_phase_accumulators[:C, :] = (accum + 2 * math.pi * freqs * (frames / self.fs_audio)) % (2 * math.pi)
-        mid = max(1, C // 2)
-        return torch.clamp(torch.stack((torch.sum(final_waves[:mid, :], dim=0) / float(mid), torch.sum(final_waves[mid:, :], dim=0) / float(C - mid + 1e-5)), dim=1), -1.0, 1.0).cpu().numpy()

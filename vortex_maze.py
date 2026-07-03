@@ -3,10 +3,14 @@ import numpy as np
 import random
 
 class PythonMaze:
-    def __init__(self, dim=11):
+    def __init__(self, dim=11, seed=-1):
         self.dim = dim
         self.grid = np.ones((dim, dim), dtype=np.int32)
         
+        if seed != -1:
+            random.seed(seed)
+            np.random.seed(seed)
+            
         attempts = 0
         is_valid = False
         best_exit = None
