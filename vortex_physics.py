@@ -20,7 +20,16 @@ class PhaseVortexArena:
         self.current_seed = seed
         self.solver = FluidSolver(res, device)
         
-        self.cfg = {'vorticity_sensitivity': 0.15, 'fluid_damping': 0.80}
+        # Настройки баланса физики, удержания формы и взаимодействия со стенами
+        self.cfg = {
+            'vorticity_sensitivity': 0.15, 
+            'fluid_damping': 0.80,
+            'spring_stiffness': 1500.0,        # Базовая жесткость каркаса слайма
+            'eeg_force_scale': 4.50,         # Масштаб BCI-сил инжекции
+            'manual_force_scale': 600.0,     # Масштаб ручного управления (клавиатура/геймпад)
+            'wall_repulsion_scale': 4000.0,   # Сила упругого отталкивания от стен
+            'wall_penetration_limit': 0.04,   # Порог плотности стены, при котором она полностью непроходима (sliding collision)
+        }
         self.smooth_vorticity = 0.0
         
         self.u = torch.zeros((1, 1, res, res), device=device)
@@ -91,8 +100,15 @@ class PhaseVortexArena:
         self.smooth_vorticity = 0.0
 
     def step(self, dt, time_sec, eeg_c0_spectrum, eeg_vx, eeg_vy, eeg_tq, is_real_data, compression, scale_factor, eeg_freqs=None):
-        scale = 0.2 + (1.0 - compression) * 2.0
-        node_radius = 4.0 + (1.0 - compression) * 10.0
+        # Алгоритм масштабирования под биполярную шкалу [-1.0 (разжат), 0.0 (нейтрален), 1.0 (сжат)]
+        if compression > 0.0:
+            scale = 1.25 - compression * 1.10          # Сжатие: стягиваем в плотное ядро (до 0.15)
+            node_radius = 8.0 - compression * 4.0
+            stiffness = 150.0 + compression * 2350.0   # Сверхвысокая жесткость до 2500.0 для отклика без задержек
+        else:
+            scale = 1.25 - compression * 5.25          # Разжатие: расширяем в масштабный невод (до 6.5)
+            node_radius = 8.0 - compression * 32.0
+            stiffness = 150.0 + compression * 135.0    # Мягкая просадка упругости для волновых огибаний
 
         self.u = torch.nan_to_num(self.u, nan=0.0) * 0.99
         self.v = torch.nan_to_num(self.v, nan=0.0) * 0.99
@@ -113,7 +129,7 @@ class PhaseVortexArena:
             
         com = self.pin_pos.mean(dim=0)
         
-        # ТОРОИДАЛЬНОЕ СЧИТЫВАНИЕ (Слайм живет в бесконечности, но щупает затайленную сетку)
+        # ТОРОИДАЛЬНОЕ СЧИТЫВАНИЕ
         pin_uv_raw = (self.pin_pos / self.screen_size) * 2.0 - 1.0
         pin_uv = torch.remainder(pin_uv_raw + 1.0, 2.0) - 1.0
         
@@ -127,23 +143,26 @@ class PhaseVortexArena:
         dy_ideal = self.pin_x * sin_p + self.pin_y * cos_p
         ideal_pos = com.unsqueeze(0) + torch.stack([dx_ideal, dy_ideal], dim=1) * scale
         
-        f_spring = (ideal_pos - self.pin_pos) * 6.0
+        # Вычисление силы упругости каркаса
+        f_spring = (ideal_pos - self.pin_pos) * stiffness
         
         pin_gx = torch.remainder((self.pin_pos[:, 0] / self.WIDTH) * self.res, self.res)
         pin_gy = torch.remainder((self.pin_pos[:, 1] / self.HEIGHT) * self.res, self.res)
         
-        # Тороидальные градиенты для инъекции силы упругости
+        # Тороидальные градиенты для инъекции силы упругости в сетку жидкости
         dx_shape = torch.remainder(self.x_indices.unsqueeze(0) - pin_gx.reshape(16, 1, 1) + self.res/2, self.res) - self.res/2
         dy_shape = torch.remainder(self.y_indices.unsqueeze(0) - pin_gy.reshape(16, 1, 1) + self.res/2, self.res) - self.res/2
         node_footprint = torch.exp(-(dx_shape**2 + dy_shape**2) / 6.0) * (~self.pin_captured).float().reshape(16, 1, 1)
         
-        spring_force_grid_x = torch.sum(node_footprint * f_spring[:, 0].reshape(16, 1, 1), dim=0)
-        spring_force_grid_y = torch.sum(node_footprint * f_spring[:, 1].reshape(16, 1, 1), dim=0)
+        # Предохранительное ограничение силы упругости для защиты сетки жидкости от взрыва при резком сжатии
+        f_spring_clamped = torch.clamp(f_spring, -1500.0, 1500.0)
+        spring_force_grid_x = torch.sum(node_footprint * f_spring_clamped[:, 0].reshape(16, 1, 1), dim=0)
+        spring_force_grid_y = torch.sum(node_footprint * f_spring_clamped[:, 1].reshape(16, 1, 1), dim=0)
         self.u[0, 0] += spring_force_grid_x * dt
         self.v[0, 0] += spring_force_grid_y * dt
         
         w_val = F.grid_sample(self.wall_density, pin_uv.view(1, 1, 16, 2), align_corners=True).squeeze()
-        w_pad = F.pad(self.wall_density, (1, 1, 1, 1), mode='circular') # Тороидальные градиенты стен
+        w_pad = F.pad(self.wall_density, (1, 1, 1, 1), mode='circular')
         grad_x = 0.5 * (w_pad[:, :, 1:-1, 2:] - w_pad[:, :, 1:-1, :-2])
         grad_y = 0.5 * (w_pad[:, :, 2:, 1:-1] - w_pad[:, :, :-2, 1:-1])
         w_gx = F.grid_sample(grad_x, pin_uv.view(1, 1, 16, 2), align_corners=True).squeeze()
@@ -153,9 +172,14 @@ class PhaseVortexArena:
         dir_out_x = -w_gx / grad_norm
         dir_out_y = -w_gy / grad_norm
         
-        f_wall = torch.stack([dir_out_x * w_val * 1500.0, dir_out_y * w_val * 1500.0], dim=1)
+        # Получаем силу упругого отталкивания от стен из конфигурационного словаря
+        repulsion_scale = self.cfg.get('wall_repulsion_scale', 4000.0)
+        f_wall = torch.stack([
+            dir_out_x * w_val * repulsion_scale, 
+            dir_out_y * w_val * repulsion_scale
+        ], dim=1)
         
-        # ТОРОИДАЛЬНЫЙ ПОРТАЛ (находит кратчайший путь сквозь край мира)
+        # ТОРОИДАЛЬНЫЙ ПОРТАЛ
         dx_p = torch.remainder(self.pin_pos[:, 0] - self.portal_pos[0] + self.WIDTH/2, self.WIDTH) - self.WIDTH/2
         dy_p = torch.remainder(self.pin_pos[:, 1] - self.portal_pos[1] + self.HEIGHT/2, self.HEIGHT) - self.HEIGHT/2
         dist_to_portal = torch.sqrt(dx_p**2 + dy_p**2)
@@ -164,18 +188,49 @@ class PhaseVortexArena:
         self.pin_captured = self.pin_captured | (dist_to_portal < capture_radius)
         cap_mask_f = self.pin_captured.float().unsqueeze(1)
         
-        pin_vel = fluid_vel * 0.9 + f_wall
-        pin_vel = torch.clamp(pin_vel, -120.0, 120.0)
+        # --- ФИЗИКА КОМПРЕССИИ: ТРАНСЛЯЦИЯ ВЕКТОРОВ НАПРЯМУЮ НА НОДЫ ДЛЯ МГНОВЕННОГО ОТКЛИКА ---
+        vx_t = torch.as_tensor(eeg_vx, dtype=torch.float32, device=self.device)
+        vy_t = torch.as_tensor(eeg_vy, dtype=torch.float32, device=self.device)
+        gamepad_vel = torch.stack([vx_t.repeat(16), vy_t.repeat(16)], dim=1) * 220.0
+        
+        blend = max(0.0, min(1.0, compression))  # Смешиваем в диапазоне [0.0 (нейтраль) ... 1.0 (сжатие)]
+        
+        # Сила упругости, транслируемая напрямую в скорость нод для мгновенного сжатия
+        v_spring = (ideal_pos - self.pin_pos) * 12.0
+        
+        # При сжатии замещаем гидродинамику прямой кинематической трансляцией стиков и упругого сжатия
+        pin_vel = (1.0 - blend) * fluid_vel * 0.9 + blend * (gamepad_vel + v_spring) + f_wall
+        
+        # === МАТЕМАТИЧЕСКИ ГЕРМЕТИЧНАЯ СКОЛЬЗЯЩАЯ ПРОЕКЦИЯ КОЛЛИЗИЙ (COLLISION RESOLUTION) ===
+        # Проектируем вектор скорости по нормали к стене, гася проникающий импульс
+        dot_product = pin_vel[:, 0] * dir_out_x + pin_vel[:, 1] * dir_out_y
+        
+        # Плотность стены преодолела порог непроходимости
+        limit = self.cfg.get('wall_penetration_limit', 0.04)
+        blocking_factor = torch.clamp(w_val / limit, 0.0, 1.0)
+        
+        moving_into_wall = dot_product < 0
+        
+        # Обнуляем только ту часть вектора, которая пытается двигаться сквозь преграду
+        pin_vel[:, 0] = torch.where(moving_into_wall, pin_vel[:, 0] - dot_product * dir_out_x * blocking_factor, pin_vel[:, 0])
+        pin_vel[:, 1] = torch.where(moving_into_wall, pin_vel[:, 1] - dot_product * dir_out_y * blocking_factor, pin_vel[:, 1])
+        
+        pin_vel = torch.clamp(pin_vel, -250.0, 250.0)
         
         self.pin_pos[~self.pin_captured] += pin_vel[~self.pin_captured] * dt
         
-        # Притягиваем к виртуальному порталу (ближайшей копии портала в бесконечности)
+        # === ЖЕСТКОЕ ВЫТАЛКИВАНИЕ ПРИ ГЛУБОКОМ ПРОНИКНОВЕНИИ (PENETRATION RESOLUTION) ===
+        # Если нода все же оказалась внутри стены, принудительно выталкиваем ее координаты по нормали наружу
+        pushed_mask = w_val > limit
+        if pushed_mask.any():
+            push_dist = (w_val - limit) * 80.0 * dt
+            self.pin_pos[pushed_mask, 0] += dir_out_x[pushed_mask] * push_dist[pushed_mask]
+            self.pin_pos[pushed_mask, 1] += dir_out_y[pushed_mask] * push_dist[pushed_mask]
+        
+        # Притягиваем к виртуальному порталу
         virtual_portal_pos = torch.stack([self.pin_pos[:, 0] - dx_p, self.pin_pos[:, 1] - dy_p], dim=1)
         self.pin_pos[self.pin_captured] = virtual_portal_pos[self.pin_captured] 
 
-        # ОГЕЙМПАДИВАНИЕ ХВОСТА: Снизили скорость advect для свечения до 0.4.
-        # Теперь частицы слайма (скорость 0.9) физически обгоняют жидкость, 
-        # оставляя красивый кометный шлейф СЗАДИ, а не спереди.
         self.player_density = self.solver.advect(self.player_density, self.u, self.v, dt * 0.4)
         self.density = self.solver.advect(self.density, self.u, self.v, dt * 0.4)
 
@@ -185,7 +240,13 @@ class PhaseVortexArena:
         if is_real_data:
             if eeg_c0_spectrum is not None and eeg_freqs is not None:
                 F_bins = eeg_freqs.shape[0]
-                dynamic_radius = 200.0 / (eeg_freqs + 2.0) 
+                
+                # В разжатом состоянии расширяем радиус проекции частотных спектров на среду
+                if compression < 0.0:
+                    expand_ratio = -compression
+                    dynamic_radius = (200.0 / (eeg_freqs + 2.0)) * (1.0 + expand_ratio * 3.0)
+                else:
+                    dynamic_radius = 200.0 / (eeg_freqs + 2.0) 
 
                 is_active_1d = (~self.pin_captured).float()
                 active_matrix = is_active_1d.unsqueeze(1) * is_active_1d.unsqueeze(0)
@@ -219,8 +280,9 @@ class PhaseVortexArena:
                 total_force_x = (total_force_x / max(1, F_bins)).reshape(self.res, self.res)
                 total_force_y = (total_force_y / max(1, F_bins)).reshape(self.res, self.res)
 
-                self.u[0, 0] += self.player_density[0, 0] * total_force_x * 150.0 * dt
-                self.v[0, 0] += self.player_density[0, 0] * total_force_y * 150.0 * dt
+                # Использование настраиваемого eeg_force_scale
+                self.u[0, 0] += self.player_density[0, 0] * total_force_x * self.cfg.get('eeg_force_scale', 150.0) * dt
+                self.v[0, 0] += self.player_density[0, 0] * total_force_y * self.cfg.get('eeg_force_scale', 150.0) * dt
                 
                 force_mag = torch.sqrt(total_force_x**2 + total_force_y**2)
                 injection_mask = self.player_density[0, 0] * (force_mag > 0.05).float()
@@ -229,40 +291,96 @@ class PhaseVortexArena:
                 self.density[0, 2] += injection_mask * torch.clamp(force_mag / 20.0, 0.0, 0.2)
             
             else:
-                # MANUAL CONTROL PHYSICS (Gamepad/Keyboard Fallback)
+                # MANUAL CONTROL PHYSICS
                 world_vx = eeg_vx * cos_p + eeg_vy * sin_p
                 world_vy = -eeg_vx * sin_p + eeg_vy * cos_p
                 
-                mid_gx = torch.remainder((com[0] / self.WIDTH) * self.res, self.res)
-                mid_gy = torch.remainder((com[1] / self.HEIGHT) * self.res, self.res)
-                
-                dx_grid = torch.remainder(self.x_indices - mid_gx + self.res/2, self.res) - self.res/2
-                dy_grid = torch.remainder(self.y_indices - mid_gy + self.res/2, self.res) - self.res/2
-                
-                manual_radius = 12.0
-                footprint = torch.exp(-(dx_grid**2 + dy_grid**2) / manual_radius)
-                
-                self.u[0, 0] += footprint * world_vx * 600.0 * dt
-                self.v[0, 0] += footprint * world_vy * 600.0 * dt
-                
-                # РЕАКТИВНЫЙ ВБРОС: Свечение вбрасывается НАЗАД вектору движения
-                # Это гарантирует красивое вырывание пламени из хвоста
-                force_mag = math.sqrt(world_vx**2 + world_vy**2)
-                if force_mag > 0.1:
-                    back_x = -world_vx / (force_mag + 1e-5)
-                    back_y = -world_vy / (force_mag + 1e-5)
+                if compression < 0.0:
+                    # --- ВИХРЕВАЯ СЕНСОРНАЯ СЕТЬ (МНОГОТОЧЕЧНОЕ РАСПРЕДЕЛЕННОЕ УПРАВЛЕНИЕ) ---
+                    expand_ratio = -compression
                     
-                    mid_gx_back = torch.remainder(mid_gx + back_x * 4.0, self.res)
-                    mid_gy_back = torch.remainder(mid_gy + back_y * 4.0, self.res)
+                    for i in range(16):
+                        if self.pin_captured[i]:
+                            continue
+                        
+                        # Расчет полярных радиус-векторов относительно центра масс
+                        dx_com = self.pin_pos[i, 0] - com[0]
+                        dy_com = self.pin_pos[i, 1] - com[1]
+                        dist_com = torch.sqrt(dx_com**2 + dy_com**2) + 1e-5
+                        
+                        # Тангенциальные векторы для вращательного движения нод вокруг центра
+                        tangent_x = -dy_com / dist_com
+                        tangent_y = dx_com / dist_com
+                        
+                        swirl_vx = tangent_x * eeg_tq * self.cfg.get('manual_force_scale', 600.0) * 0.7 * expand_ratio
+                        swirl_vy = tangent_y * eeg_tq * self.cfg.get('manual_force_scale', 600.0) * 0.7 * expand_ratio
+                        
+                        # Центростремительное втягивание среды для захвата плотности
+                        suction_vx = -dx_com / dist_com * self.cfg.get('manual_force_scale', 600.0) * 0.2 * expand_ratio
+                        suction_vy = -dy_com / dist_com * self.cfg.get('manual_force_scale', 600.0) * 0.2 * expand_ratio
+                        
+                        node_gx_rem = pin_gx[i]
+                        node_gy_rem = pin_gy[i]
+                        
+                        dx_grid_n = torch.remainder(self.x_indices - node_gx_rem + self.res/2, self.res) - self.res/2
+                        dy_grid_n = torch.remainder(self.y_indices - node_gy_rem + self.res/2, self.res) - self.res/2
+                        node_local_footprint = torch.exp(-(dx_grid_n**2 + dy_grid_n**2) / 8.0)
+                        
+                        # Индивидуальное ускорение на каждую точку гигантского невода
+                        total_node_vx = swirl_vx + suction_vx + (world_vx * self.cfg.get('manual_force_scale', 600.0) * 0.4 * expand_ratio)
+                        total_node_vy = swirl_vy + suction_vy + (world_vy * self.cfg.get('manual_force_scale', 600.0) * 0.4 * expand_ratio)
+                        
+                        self.u[0, 0] += node_local_footprint * total_node_vx * dt
+                        self.v[0, 0] += node_local_footprint * total_node_vy * dt
+                        
+                        # Рисуем вихревые следы светящейся плотностью
+                        self.density[0, 0] += node_local_footprint * 0.15 * expand_ratio
+                        self.density[0, 2] += node_local_footprint * 0.3 * expand_ratio
                     
-                    dx_grid_back = torch.remainder(self.x_indices - mid_gx_back + self.res/2, self.res) - self.res/2
-                    dy_grid_back = torch.remainder(self.y_indices - mid_gy_back + self.res/2, self.res) - self.res/2
-                    footprint_back = torch.exp(-(dx_grid_back**2 + dy_grid_back**2) / manual_radius)
+                    # Мягкий компенсирующий импульс в центре масс для сохранения инерции структуры
+                    mid_gx = torch.remainder((com[0] / self.WIDTH) * self.res, self.res)
+                    mid_gy = torch.remainder((com[1] / self.HEIGHT) * self.res, self.res)
+                    dx_grid = torch.remainder(self.x_indices - mid_gx + self.res/2, self.res) - self.res/2
+                    dy_grid = torch.remainder(self.y_indices - mid_gy + self.res/2, self.res) - self.res/2
+                    footprint = torch.exp(-(dx_grid**2 + dy_grid**2) / 12.0)
+                    self.u[0, 0] += footprint * world_vx * self.cfg.get('manual_force_scale', 600.0) * (1.0 - expand_ratio) * dt
+                    self.v[0, 0] += footprint * world_vy * self.cfg.get('manual_force_scale', 600.0) * (1.0 - expand_ratio) * dt
+                else:
+                    # СТАНДАРТНОЕ СОСТОЯНИЕ И РЕЖИМ ЖЕСТКОГО НЕЙРОГЕЙМПАДА
+                    mid_gx = torch.remainder((com[0] / self.WIDTH) * self.res, self.res)
+                    mid_gy = torch.remainder((com[1] / self.HEIGHT) * self.res, self.res)
                     
-                    self.density[0, 0] += footprint_back * 0.4
-                    self.density[0, 1] += footprint_back * 0.6
+                    dx_grid = torch.remainder(self.x_indices - mid_gx + self.res/2, self.res) - self.res/2
+                    dy_grid = torch.remainder(self.y_indices - mid_gy + self.res/2, self.res) - self.res/2
+                    
+                    manual_radius = 12.0
+                    footprint = torch.exp(-(dx_grid**2 + dy_grid**2) / manual_radius)
+                    
+                    self.u[0, 0] += footprint * world_vx * self.cfg.get('manual_force_scale', 600.0) * dt
+                    self.v[0, 0] += footprint * world_vy * self.cfg.get('manual_force_scale', 600.0) * dt
+                    
+                    force_mag = math.sqrt(world_vx**2 + world_vy**2)
+                    if force_mag > 0.1:
+                        back_x = -world_vx / (force_mag + 1e-5)
+                        back_y = -world_vy / (force_mag + 1e-5)
+                        
+                        mid_gx_back = torch.remainder(mid_gx + back_x * 4.0, self.res)
+                        mid_gy_back = torch.remainder(mid_gy + back_y * 4.0, self.res)
+                        
+                        dx_grid_back = torch.remainder(self.x_indices - mid_gx_back + self.res/2, self.res) - self.res/2
+                        dy_grid_back = torch.remainder(self.y_indices - mid_gy_back + self.res/2, self.res) - self.res/2
+                        footprint_back = torch.exp(-(dx_grid_back**2 + dy_grid_back**2) / manual_radius)
+                        
+                        self.density[0, 0] += footprint_back * 0.4
+                        self.density[0, 1] += footprint_back * 0.6
                 
-                self.player_angle += eeg_tq * 3.0 * dt
+                # При сжатии делаем поворот в ручном режиме более отзывчивым
+                if compression > 0.0:
+                    turn_mult = 3.0 + blend * 2.0
+                    self.player_angle += eeg_tq * turn_mult * dt
+                else:
+                    self.player_angle += eeg_tq * 3.0 * dt
+                self.player_angle = (self.player_angle + math.pi) % (2.0 * math.pi) - math.pi
 
         goal_gx = (self.portal_pos[0] / self.WIDTH) * self.res
         goal_gy = (self.portal_pos[1] / self.HEIGHT) * self.res

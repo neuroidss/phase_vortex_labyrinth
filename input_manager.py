@@ -112,8 +112,8 @@ class UnifiedInputManager:
             else:
                 self.compression_axis = 0.0
 
-        # Переводим результирующую биполярную ось сжатия [-1..1] в диапазон [0..1] для физического движка
-        ui_compression = (self.compression_axis + 1.0) / 2.0
+        # Возвращаем чистую биполярную ось [-1.0, 1.0] для физического движка
+        ui_compression = self.compression_axis
 
         if abs(eeg_vx) > 0.05 or abs(eeg_vy) > 0.05 or abs(eeg_tq) > 0.05 or abs(ctrl_comp) > 0.05:
             is_real_data = True

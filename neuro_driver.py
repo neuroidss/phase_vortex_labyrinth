@@ -34,8 +34,71 @@ def get_ubuntu_hci_adapters():
     return ['hci0']
 
 
+class DecodedPacketQueue:
+    """
+    Высокопроизводительный буфер отложенного декодирования.
+    Освобождает критический поток BLE-событий от ресурсоемкого разбора байт.
+    """
+    def __init__(self, slot_idx, hci_adapter, packet_counts_ref=None):
+        self.raw_queue = collections.deque()
+        self.last_seq = None
+        self.lost_count = 0
+        self.slot_idx = slot_idx
+        self.hci_adapter = hci_adapter
+        self.packet_counts_ref = packet_counts_ref
+
+    def append(self, data):
+        # Мгновенная вставка сырых байт в очередь без парсинга
+        self.raw_queue.append(data)
+        # Увеличиваем счетчик пакетов только для BLE, так как LSL инкрементирует его вручную
+        if not isinstance(data, list) and self.packet_counts_ref is not None:
+            self.packet_counts_ref[self.slot_idx] += 1
+
+    def __len__(self):
+        return len(self.raw_queue)
+
+    def popleft(self):
+        if not self.raw_queue:
+            return None
+            
+        data = self.raw_queue.popleft()
+        
+        # Если данные уже декодированы (поток LSL), возвращаем как есть
+        if isinstance(data, list):
+            return data
+            
+        # Декодирование сырого пакета на лету в основном вычислительном потоке
+        if len(data) != 51 or data[0] != 0xA0 or data[50] != 0xC0: 
+            return [0.0] * 16
+        
+        seq_num = int(data[1])
+        if self.last_seq is not None:
+            diff = (seq_num - self.last_seq) % 256
+            if diff != 1:
+                lost = (diff - 1) % 256
+                self.lost_count += lost
+                # Логирование потерь выведено из прерывания во избежание блокировок GIL
+                print(f"\n[!!! ПОТЕРЯ !!!] Слот {self.slot_idx} ({self.hci_adapter}) пропустил {lost} пакетов!")
+                
+        self.last_seq = seq_num
+        
+        channels = [0.0] * 16
+        for i in range(8):
+            val = (data[2 + i*3] << 16) | (data[2 + i*3 + 1] << 8) | data[2 + i*3 + 2]
+            if val & 0x800000: 
+                val -= 0x1000000
+            channels[i] = float(val)
+        for i in range(8):
+            val = (data[26 + i*3] << 16) | (data[26 + i*3 + 1] << 8) | data[26 + i*3 + 2]
+            if val & 0x800000: 
+                val -= 0x1000000
+            channels[i+8] = float(val)
+            
+        return channels
+
+
 class BoardWorker(threading.Thread):
-    def __init__(self, slot_idx, buffers, queues, last_seq_nums, lost_packet_counts, packet_counts, hci_adapter):
+    def __init__(self, slot_idx, buffers, queues, last_seq_nums, lost_packet_counts, packet_counts, hci_adapter, driver=None):
         super().__init__(daemon=True)
         self.slot_idx = slot_idx
         self.buffers = buffers
@@ -44,6 +107,7 @@ class BoardWorker(threading.Thread):
         self.lost_packet_counts = lost_packet_counts
         self.packet_counts = packet_counts
         self.hci_adapter = hci_adapter 
+        self.driver = driver
         
         self.mac_address = None
         self.is_connected = False
@@ -72,6 +136,11 @@ class BoardWorker(threading.Thread):
 
     async def worker_loop(self):
         while True:
+            # Опциональное отключение автоподключения BLE при активных LSL клиентах
+            if self.driver and self.driver.disable_ble_on_lsl and len(self.driver.lsl_inlets) > 0:
+                await asyncio.sleep(1.0)
+                continue
+
             mac = None
             with self.lock:
                 mac = self.mac_address
@@ -87,6 +156,9 @@ class BoardWorker(threading.Thread):
                     await client.start_notify(DATA_CHAR_UUID, self.ble_callback)
                     
                     while client.is_connected and self.mac_address == mac:
+                        # Принудительное отключение, если в процессе работы появился LSL и активна опция
+                        if self.driver and self.driver.disable_ble_on_lsl and len(self.driver.lsl_inlets) > 0:
+                            break
                         await asyncio.sleep(0.1)
                         
             except Exception:
@@ -96,38 +168,14 @@ class BoardWorker(threading.Thread):
             await asyncio.sleep(1.0)
 
     def ble_callback(self, sender, data):
-        if len(data) != 51 or data[0] != 0xA0 or data[50] != 0xC0: return
-        
-        seq_num = int(data[1])
-        last_seq = self.last_seq_nums[self.slot_idx]
-        if last_seq is not None:
-            diff = (seq_num - last_seq) % 256
-            if diff != 1:
-                lost = (diff - 1) % 256
-                self.lost_packet_counts[self.slot_idx] += lost
-                print(f"\n[!!! ПОТЕРЯ !!!] Слот {self.slot_idx} ({self.hci_adapter}) пропустил {lost} пакетов!")
-                
-        self.last_seq_nums[self.slot_idx] = seq_num
-        self.packet_counts[self.slot_idx] += 1 
-        
-        channels = [0.0] * 16
-        for i in range(8):
-            val = (data[2 + i*3] << 16) | (data[2 + i*3 + 1] << 8) | data[2 + i*3 + 2]
-            if val & 0x800000: val -= 0x1000000
-            channels[i] = float(val)
-        for i in range(8):
-            val = (data[26 + i*3] << 16) | (data[26 + i*3 + 1] << 8) | data[26 + i*3 + 2]
-            if val & 0x800000: val -= 0x1000000
-            channels[i+8] = float(val)
-            
-        self.queues[self.slot_idx].append(channels)
+        # Мгновенная регистрация данных в буфер без блокировки прерывания
+        self.queues[self.slot_idx].append(data)
 
 
 class RealNeuroDriver:
     def __init__(self, char_uuid=DATA_CHAR_UUID):
         self.char_uuid = char_uuid
         self.buffers = [np.zeros((16, 500), dtype=np.float32) for _ in range(5)]
-        self.queues = [collections.deque() for _ in range(5)]
         
         self.last_seq_nums = [None] * 5
         self.lost_packet_counts = [0] * 5
@@ -137,13 +185,21 @@ class RealNeuroDriver:
         self.lsl_inlets = {}
         self.scanner_running = True
         
+        # Опция отключения BLE автоподключений/сканирования при наличии активных потоков LSL
+        self.disable_ble_on_lsl = True
+        
         self.system_adapters = get_ubuntu_hci_adapters()
         print(f"[HW-INIT] Доступные адаптеры в Ubuntu: {self.system_adapters}")
+        
+        self.queues = []
+        for i in range(5):
+            assigned_adapter = self.system_adapters[i % len(self.system_adapters)]
+            self.queues.append(DecodedPacketQueue(i, assigned_adapter, self.packet_counts))
         
         self.workers = []
         for i in range(5):
             assigned_adapter = self.system_adapters[i % len(self.system_adapters)]
-            w = BoardWorker(i, self.buffers, self.queues, self.last_seq_nums, self.lost_packet_counts, self.packet_counts, assigned_adapter)
+            w = BoardWorker(i, self.buffers, self.queues, self.last_seq_nums, self.lost_packet_counts, self.packet_counts, assigned_adapter, driver=self)
             self.workers.append(w)
             w.start()
             
@@ -171,10 +227,6 @@ class RealNeuroDriver:
         return self.get_slot_raw_data(slot_idx)
 
     def get_active_slots_data(self, fallback_sim):
-        """
-        Метод для динамического рендера: собирает только активные данные.
-        Исправлен: теперь возвращает ровно 3 значения (eeg, slots, is_real)
-        """
         active_slots = []
         for i in range(5):
             is_ble_active = self.workers[i].is_connected
@@ -183,14 +235,12 @@ class RealNeuroDriver:
                 active_slots.append(i)
             
         if not active_slots:
-            # Возвращаем симуляцию (16 каналов), Слот 0, Флаг реальных данных = False
             return fallback_sim, [0], False
                 
         data_list = []
         for slot_idx in active_slots:
             data_list.append(self.get_slot_data(slot_idx, None))
                 
-        # Возвращаем склеенные данные, список слотов, Флаг реальных данных = True
         return np.concatenate(data_list, axis=0), active_slots, True
 
     def _run_sps_calc(self):
@@ -255,6 +305,10 @@ class RealNeuroDriver:
     async def _ble_scan_loop(self):
         print(f"[SCANNER] Мастер-сканер запущен...")
         async def detection_callback(device, advertisement_data):
+            # Отменяем регистрацию новых устройств BLE, если LSL активен и включена опция
+            if self.disable_ble_on_lsl and len(self.lsl_inlets) > 0:
+                return
+
             mac = device.address
             uuids = advertisement_data.service_uuids if advertisement_data.service_uuids else []
             if any(SERVICE_UUID.lower() in u.lower() for u in uuids):
@@ -266,6 +320,11 @@ class RealNeuroDriver:
                             break
 
         while self.scanner_running:
+            # Прерываем сканирование BLE, если LSL активен и включена опция
+            if self.disable_ble_on_lsl and len(self.lsl_inlets) > 0:
+                await asyncio.sleep(1.0)
+                continue
+
             try:
                 async with BleakScanner(detection_callback=detection_callback, service_uuids=[SERVICE_UUID], adapter=self.system_adapters[0]):
                     await asyncio.sleep(4.0)

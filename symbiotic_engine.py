@@ -41,11 +41,7 @@ class SymbioticEngineGPU:
         # Окно Хенна для STFT, убирающее спектральную утечку частот
         self.stft_window = torch.hann_window(128, device=self.device)
 
-    def set_maze(self, maze):
-        self.maze = maze
-        self.maze_grid_gpu = torch.tensor(maze.grid, dtype=torch.int32, device=self.device)
-
-    def get_predictive_ciplv(self, C):
+    def get_predictive_ciplv(self, C, compression=0.0):
         self.gpu_eeg_tensor[:C, :].copy_(self.pinned_cpu_buffer[:C, :], non_blocking=True)
         active_eeg_gpu = self.gpu_eeg_tensor[:C, :]
         
@@ -53,14 +49,24 @@ class SymbioticEngineGPU:
         X = torch.stft(active_eeg_gpu, n_fft=128, hop_length=16, window=self.stft_window, return_complex=True) 
         stft_freqs = torch.linspace(0, self.fs_eeg / 2.0, X.shape[1], device=self.device)
         
-        # 2. Выбираем ВЕСЬ спектр от 3 Гц до 100 Гц, жестко вырезая сетевой шум 50 Гц (48-52)
-        valid_mask = (stft_freqs >= 3.0) & (stft_freqs <= 100.0) & ~((stft_freqs >= 48.0) & (stft_freqs <= 52.0))
-        X_valid = X[:, valid_mask, :] # [C, ~48 частот, Time]
-        freqs = stft_freqs[valid_mask] # [~48 частот]
+        # 2. Вычисляем динамические границы спектра на основе уровня сжатия [0.0 ... 1.0]
+        blend = max(0.0, min(1.0, float(compression)))
+        min_f = 3.0 + blend * 15.0     # При сжатии нижний порог поднимается с 3 Гц до 18 Гц
+        max_f = 100.0 - blend * 64.0   # При сжатии верхний порог опускается со 100 Гц до 36 Гц
+        
+        # Вырезаем нужный спектр по динамическим границам
+        valid_mask = (stft_freqs >= min_f) & (stft_freqs <= max_f)
+        
+        # Режекторные фильтры сетевого шума 50 Гц и его гармоники 100 Гц ВСЕГДА жестко активны, как в прошивке АЦП
+        valid_mask = valid_mask & ~((stft_freqs >= 48.0) & (stft_freqs <= 52.0))
+        valid_mask = valid_mask & ~((stft_freqs >= 98.0) & (stft_freqs <= 102.0))
+            
+        X_valid = X[:, valid_mask, :] # [C, F_bins, Time]
+        freqs = stft_freqs[valid_mask] # [F_bins]
         
         num_frames = X_valid.shape[2]
         
-        # 3. ciPLV по матричному алгоритму
+        # 3. ciPLV по матричному алгоритму (Bruña et al., 2018)
         Z = X_valid / (torch.abs(X_valid) + 1e-8) # [C, F, T]
         Z = Z.permute(1, 0, 2) # [F, C, T] 
         

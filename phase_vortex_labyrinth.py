@@ -92,15 +92,28 @@ def main():
                             neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, :-1] = neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, 1:].clone()
                             neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, -1] = torch.tensor(q.popleft())
                     
-                    c0_spec, freqs, _, _, _ = neuro_engine.get_predictive_ciplv(len(active_slots) * 16)
+                    # Передаем текущую компрессию для динамического сужения STFT-фильтра к 18-36 Гц
+                    c0_spec, freqs, bci_vx, bci_vy, bci_tq = neuro_engine.get_predictive_ciplv(len(active_slots) * 16, ui_compression)
                     eeg_c0_spectrum = c0_spec[:16, :16, :]
                     eeg_freqs = freqs
-                    # Обнуляем ручные векторы при наличии сигналов мозга
-                    eeg_vx, eeg_vy, eeg_tq = 0.0, 0.0, 0.0
+                    
+                    # Переносим BCI-интенции напрямую в управляющие векторы вместо их обнуления
+                    raw_bci_vx = bci_vx.item() if hasattr(bci_vx, 'item') else float(bci_vx)
+                    raw_bci_vy = bci_vy.item() if hasattr(bci_vy, 'item') else float(bci_vy)
+                    raw_bci_tq = bci_tq.item() if hasattr(bci_tq, 'item') else float(bci_tq)
+                    
+                    # Калибруем масштабы под стандартный диапазон стиков [-1.0 ... 1.0]
+                    eeg_vx = max(-1.0, min(1.0, raw_bci_vx / 350.0))
+                    eeg_vy = max(-1.0, min(1.0, raw_bci_vy / 350.0))
+                    eeg_tq = max(-1.0, min(1.0, raw_bci_tq / 60.0))
 
-            scale = 1.5 + (1.0 - ui_compression) * 5.0
+            # Динамически адаптируем масштаб отрисовки в зависимости от сжатия
+            if ui_compression > 0.0:
+                scale = 1.25 - ui_compression * 1.10
+            else:
+                scale = 1.25 - ui_compression * 5.25
             
-            # ИСПРАВЛЕНО: Считываем количество захваченных нод СТРОГО до шага физики
+            # Считываем количество захваченных нод до шага физики
             prev_captured = arena.pin_captured.sum().item()
             
             arena.step(dt, time_sec, eeg_c0_spectrum, eeg_vx, eeg_vy, eeg_tq, is_real_data, ui_compression, scale, eeg_freqs)
