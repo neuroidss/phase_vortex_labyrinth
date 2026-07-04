@@ -24,7 +24,7 @@ class FluidSolver:
         
         return F.grid_sample(field, sampling_grid, mode='bilinear', padding_mode='border', align_corners=True)
 
-    def project(self, u, v, wall_density):
+    def project(self, u, v, wall_density, target_div=None):
         # ФИЗИКА: Снизили порог блокировки до 0.05. Теперь даже тонкая стена полностью останавливает жидкость.
         block_mask = (wall_density > 0.05).float()
         u = u * (1.0 - block_mask)
@@ -35,6 +35,10 @@ class FluidSolver:
         v_pad = F.pad(v, (0, 0, 1, 1), mode='circular')
         div = 0.5 * (u_pad[:, :, :, 2:] - u_pad[:, :, :, :-2] + v_pad[:, :, 2:, :] - v_pad[:, :, :-2, :])
         
+        if target_div is not None:
+            # Внедряем источниковый/стоковый член в уравнение дивергенции для создания течений сжатия и расширения
+            div = div - target_div
+            
         p = torch.zeros_like(u)
         for _ in range(40):
             p_pad = F.pad(p, (1, 1, 1, 1), mode='circular')
