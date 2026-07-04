@@ -4,6 +4,8 @@ An experimental, non-classical Brain-Computer Interface (BCI) esports engine bui
 
 The engine completely discards traditional discrete button-based inputs, transitioning control entirely into **direct spatial perturbations of a continuous physical medium**. The controlled avatar (slime) and the surrounding labyrinth coexist within a seamless, non-Euclidean toroidal continuum.
 
+[gameplay](https://drive.google.com/file/d/1x8jnGOfOT4AdYe6K6T-0jPwscZurOfV7/view?usp=sharing)
+
 ---
 
 ## 🧬 Core Architecture & Physical Principles
