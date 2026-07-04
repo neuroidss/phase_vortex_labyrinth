@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 import math
 import numpy as np
+import random
 from vortex_fluid import FluidSolver
 from vortex_maze import PythonMaze
 from vortex_obstacles import init_arena_obstacles
@@ -18,20 +19,39 @@ class PhaseVortexArena:
         self.current_seed = seed
         self.solver = FluidSolver(res, device)
         
+        # === ЦЕНТРАЛИЗОВАННЫЙ СЛОВАРЬ НАСТРОЕК СИМУЛЯЦИИ ===
         self.cfg = {
             'vorticity_sensitivity': 0.15, 
             'fluid_damping': 0.80,
             'eeg_force_scale': 4.50,         
             
-            # Внутренние стены
+            # Взаимодействие со стенами
             'inner_wall_repulsion_scale': 8000.0,   
             'inner_wall_penetration_limit': 0.04,   
-            
-            # Внешние стены 
             'outer_wall_repulsion_scale': 150000.0, 
             'outer_wall_penetration_limit': 0.001,  
             
             'hide_tiled_labyrinths': True,    
+            'show_debug_window': True,       # Окно дебага формы и когерентностей FreeEEG16
+            
+            # Параметры связи когерентностей и вращения экрана
+            'coherence_relative_to_physical': True,  
+            'torque_sensitivity_multiplier': 0.0008, 
+            
+            # === ПАРАМЕТРЫ НАСТРОЙКИ СЖАТИЯ / РАСШИРЕНИЯ ===
+            'base_scale': 1.25,              
+            'compress_scale_mult': 0.45,     
+            'expand_scale_mult': 1.25,       
+            
+            'base_stiffness': 150.0,          
+            'compress_stiffness_add': 250.0,  
+            'expand_stiffness_sub': 100.0,    
+            
+            'base_node_radius': 8.0,         
+            'compress_radius_sub': 3.0,      
+            'expand_radius_add': 6.0,        
+            
+            'fluid_div_force': 25.0,         
         }
         self.smooth_vorticity = 0.0
         
@@ -60,6 +80,8 @@ class PhaseVortexArena:
         self.player_pos = torch.tensor([width/2, height/2], dtype=torch.float32, device=device)
         self.portal_pos = torch.zeros(2, dtype=torch.float32, device=device)
         self.player_angle = 0.0
+        self.debug_dot_cov = 1.0
+        self.debug_cross_cov = 0.0
         self.screen_size = torch.tensor([width, height], dtype=torch.float32, device=device)
         
         self.eeg_c0_matrix = torch.zeros((16, 16), device=device)
@@ -69,6 +91,7 @@ class PhaseVortexArena:
             torch.arange(res, device=device, dtype=torch.float32), indexing='ij'
         )
         
+        self.rune_zones = []
         self.reset_world()
         
     def init_obstacles(self):
@@ -108,22 +131,83 @@ class PhaseVortexArena:
         self.smooth_vorticity = 0.0
         self.eeg_c0_matrix.zero_()
 
+        # Инициализация Рунических Зон в пустых ячейках лабиринта
+        self.rune_zones = []
+        empty_cells = []
+        for r in range(1, dim - 1):
+            for c in range(1, dim - 1):
+                if self.maze.grid[r, c] == 0:
+                    if (c, r) != (1, 1) and (c, r) != self.goal_cell:
+                        empty_cells.append((c, r))
+                        
+        rng = random.Random(self.current_seed)
+        rng.shuffle(empty_cells)
+        
+        num_zones = min(3, len(empty_cells))
+        for i in range(num_zones):
+            cz, rz = empty_cells[i]
+            zx = (self.WIDTH * 0.1) + (cz + 0.5) * self.cell_w
+            zy = (self.HEIGHT * 0.1) + (rz + 0.5) * self.cell_w
+            self.rune_zones.append({
+                'cell': (cz, rz),
+                'pos': torch.tensor([zx, zy], dtype=torch.float32, device=self.device),
+                'radius': self.cell_w * 0.5,
+                'charge': 0.0,
+                'completed': False,
+                'classification': "Pending",
+                'telemetry': {
+                    'deformation': [],
+                    'vorticity': [],
+                    'acceleration': [],
+                    'angles': [],
+                    'vel_mags': []
+                },
+                'last_vel': torch.zeros(2, dtype=torch.float32, device=self.device)
+            })
+
+    def _classify_control_style(self, telemetry):
+        if len(telemetry['deformation']) < 5:
+            return "Gamepad"
+            
+        defs = np.array(telemetry['deformation'])
+        angles = np.array(telemetry['angles'])
+        accels = np.array(telemetry['acceleration'])
+        vel_mags = np.array(telemetry['vel_mags'])
+        
+        pi_4 = np.pi / 4.0
+        angles = np.mod(angles + np.pi, 2 * np.pi) - np.pi
+        grid_devs = np.minimum(np.abs(angles % pi_4), pi_4 - np.abs(angles % pi_4))
+        mean_grid_dev = np.mean(grid_devs)
+        accel_jitter = np.std(accels)
+        mean_def = np.mean(defs)
+        
+        if accel_jitter < 3.5:
+            return "AI (Autopilot)"
+        if mean_grid_dev < 0.06:
+            return "Keyboard"
+        if mean_def > 14.0:
+            return "Neuroslime (Direct EEG)"
+        if accel_jitter > 28.0:
+            return "Neurogamepad (EEG-Stick)"
+            
+        return "Gamepad"
+
     def step(self, dt, time_sec, eeg_c0_spectrum, eeg_vx, eeg_vy, eeg_tq, is_real_data, compression, scale_factor, eeg_freqs=None):
         if torch.is_tensor(eeg_vx): eeg_vx = eeg_vx.item()
         if torch.is_tensor(eeg_vy): eeg_vy = eeg_vy.item()
         if torch.is_tensor(eeg_tq): eeg_tq = eeg_tq.item()
 
-        # === 1. АСИММЕТРИЧНЫЙ КОНТИНУУМ ===
+        # === 1. АСИММЕТРИЧНЫЙ КОНТИНУУМ (ДИНАМИЧЕСКИЕ ПАРАМЕТРЫ ИЗ CFG) ===
         blend = max(-1.0, min(1.0, compression))
         
         if blend < 0.0:
-            scale = 1.25 - blend * 1.25          
-            stiffness = 150.0 + blend * 100.0   
-            node_radius = 8.0 - blend * 6.0     
+            scale = self.cfg['base_scale'] - blend * self.cfg['expand_scale_mult']
+            stiffness = self.cfg['base_stiffness'] + blend * self.cfg['expand_stiffness_sub']
+            node_radius = self.cfg['base_node_radius'] - blend * self.cfg['expand_radius_add']
         else:
-            scale = 1.25 - blend * 0.45          
-            stiffness = 150.0 + blend * 250.0   
-            node_radius = 8.0 - blend * 3.0     
+            scale = self.cfg['base_scale'] - blend * self.cfg['compress_scale_mult']
+            stiffness = self.cfg['base_stiffness'] + blend * self.cfg['compress_stiffness_add']
+            node_radius = self.cfg['base_node_radius'] - blend * self.cfg['compress_radius_sub']
 
         self.u = torch.nan_to_num(self.u, nan=0.0) * 0.99
         self.v = torch.nan_to_num(self.v, nan=0.0) * 0.99
@@ -145,16 +229,32 @@ class PhaseVortexArena:
             
         com = self.pin_pos.mean(dim=0)
         
-        # === 2. ВРАЩЕНИЕ И ГЕОМЕТРИЯ ===
+        # === 2. ЧЕСТНОЕ МАТЕМАТИЧЕСКОЕ ВРАЩЕНИЕ С ЗАЩИТОЙ ОТ СМЯТИЯ ОБ СТЕНУ ===
         actual_local_x = self.pin_pos[:, 0] - com[0]
         actual_local_y = self.pin_pos[:, 1] - com[1]
         
         cross_cov = torch.sum(self.pin_x * actual_local_y - self.pin_y * actual_local_x)
         dot_cov = torch.sum(self.pin_x * actual_local_x + self.pin_y * actual_local_y) + 1e-5
-        self.player_angle = torch.atan2(cross_cov, dot_cov).item()
+        
+        self.debug_cross_cov = cross_cov.item()
+        self.debug_dot_cov = dot_cov.item()
+        
+        raw_angle = torch.atan2(cross_cov, dot_cov).item()
+        
+        # Находим кратчайшую разницу углов
+        angle_diff = (raw_angle - self.player_angle + math.pi) % (2 * math.pi) - math.pi
+        
+        # Если скачок угла за 1 кадр аномально велик (> 1.2 рад / ~68 град), это математический артефакт
+        # смятия/инверсии матрицы при ударе об стену, а не реальный физический поворот.
+        if abs(angle_diff) < 1.2:
+            # Плавная фильтрация с ограничением максимальной скорости вращения (6.0 рад/с)
+            max_step = 6.0 * dt
+            clamped_diff = max(-max_step, min(max_step, angle_diff))
+            self.player_angle += clamped_diff * 0.30
+            
         cos_p, sin_p = math.cos(self.player_angle), math.sin(self.player_angle)
         
-        # Идеальные позиции FreeEEG16
+        # Шаблон идеальной геометрии FreeEEG16, повернутый на стабильный угол камеры
         ideal_x = self.pin_x * cos_p - self.pin_y * sin_p
         ideal_y = self.pin_x * sin_p + self.pin_y * cos_p
         
@@ -181,8 +281,7 @@ class PhaseVortexArena:
         
         node_influence = torch.exp(-(dx_shape**2 + dy_shape**2) / node_radius) * is_active_1d.reshape(16, 1, 1)
         
-        # Нормализуем влияние каждой ноды, чтобы суммарный импульс, вливаемый в жидкость,
-        # оставался постоянным при изменении радиуса сопла (сжатии/разжатии)
+        # Нормализуем влияние каждой ноды
         node_influence_sum = torch.sum(node_influence, dim=(1, 2), keepdim=True) + 1e-8
         node_influence_normalized = node_influence / node_influence_sum
         
@@ -222,7 +321,7 @@ class PhaseVortexArena:
         dy_p = torch.remainder(self.pin_pos[:, 1] - self.portal_pos[1] + self.HEIGHT/2, self.HEIGHT) - self.HEIGHT/2
         self.pin_captured = self.pin_captured | ((torch.sqrt(dx_p**2 + dy_p**2)) < self.cell_w * 0.35)
         
-        # === 3. ФИЗИКА КОГЕРЕНТНОСТЕЙ ===
+        # === 3. ФИЗИКА КОГЕРЕНТНОСТЕЙ (ДУНОВЕНИЕ) ===
         active_matrix = is_active_1d.unsqueeze(1) * is_active_1d.unsqueeze(0)
 
         dist_local = torch.sqrt(actual_local_x**2 + actual_local_y**2) + 1e-5
@@ -234,16 +333,22 @@ class PhaseVortexArena:
             c0_total = torch.sum(c0_gpu, dim=2) 
             self.eeg_c0_matrix.copy_(c0_total)
             
-            # Векторы реактивной тяги вычисляются по неизменной идеальной геометрии (без scale!),
-            # чтобы угловые направления когерентностей оставались стабильными для пользователя.
-            dx_ideal = ideal_x.unsqueeze(1) - ideal_x.unsqueeze(0) # [16, 16]
-            dy_ideal = ideal_y.unsqueeze(1) - ideal_y.unsqueeze(0) # [16, 16]
+            if self.cfg.get('coherence_relative_to_physical', True):
+                dx_ideal = ideal_x.unsqueeze(1) - ideal_x.unsqueeze(0)
+                dy_ideal = ideal_y.unsqueeze(1) - ideal_y.unsqueeze(0)
+            else:
+                dx_ideal = self.pin_x.unsqueeze(1) - self.pin_x.unsqueeze(0)
+                dy_ideal = self.pin_y.unsqueeze(1) - self.pin_y.unsqueeze(0)
             
             force_multiplier = 35.0
             node_bci_force_x = torch.sum(c0_total * dx_ideal, dim=1) * force_multiplier
             node_bci_force_y = torch.sum(c0_total * dy_ideal, dim=1) * force_multiplier
-            bci_propulsion = torch.stack([node_bci_force_x, node_bci_force_y], dim=1)
             
+            # Вращение от BCI
+            node_bci_force_x += tangent_x * eeg_tq * 80.0
+            node_bci_force_y += tangent_y * eeg_tq * 80.0
+            
+            bci_propulsion = torch.stack([node_bci_force_x, node_bci_force_y], dim=1)
             bci_mag = torch.sqrt(torch.sum(node_bci_force_x)**2 + torch.sum(node_bci_force_y)**2).item() / 100.0
             node_coherence = torch.sum(torch.abs(c0_total), dim=1)
         else:
@@ -264,7 +369,6 @@ class PhaseVortexArena:
         f_spring_clamped_x = torch.clamp(f_spring_x, -1200.0, 1200.0)
         f_spring_clamped_y = torch.clamp(f_spring_y, -1200.0, 1200.0)
         
-        # Суммируем силы каркаса и натяжения соседних нод, проецируя их в единую сетку жидкости
         f_total_elastic_x = f_spring_clamped_x + f_neighbor[:, 0]
         f_total_elastic_y = f_spring_clamped_y + f_neighbor[:, 1]
         
@@ -278,11 +382,9 @@ class PhaseVortexArena:
         self.v[0, 0] += (eeg_react_y + bci_force_grid_y * 1.5 + spring_force_grid_y * 0.5) * dt
 
         # === 4. КИНЕМАТИКА (ПОЛНОСТЬЮ НА СИЛАХ ЖИДКОСТИ) ===
-        # Теперь все силы интегрированы в эйлерову сетку.
-        # Точки мягкого тела движутся строго под воздействием локальной скорости течения и внешних стен.
         pin_vel = fluid_vel * 0.85 + f_wall
 
-        # Скольжение вдоль стен (Velocity Projection)
+        # Скольжение вдоль стен
         dot_inner = pin_vel[:, 0] * dir_out_x_inner + pin_vel[:, 1] * dir_out_y_inner
         limit_inner = self.cfg.get('inner_wall_penetration_limit', 0.04)
         blocking_inner = torch.clamp(w_val_inner / limit_inner, 0.0, 1.0)
@@ -300,7 +402,7 @@ class PhaseVortexArena:
         pin_vel = torch.clamp(pin_vel, -180.0, 180.0)
         self.pin_pos[~self.pin_captured] += pin_vel[~self.pin_captured] * dt
         
-        # Геометрический ограничитель PBD (Position-Based Dynamics) для предотвращения разбегания из-за погрешностей интерполяции
+        # Геометрический ограничитель PBD
         self.pin_pos = apply_cohesion_constraint(
             self.pin_pos, ideal_pos, self.pin_captured, scale, blend
         )
@@ -360,9 +462,7 @@ class PhaseVortexArena:
         self.wall_density += (self.orig_obstacles - self.wall_density) * 0.15 * dt
         self.wall_density = torch.clamp(self.wall_density, 0.0, 1.0)
         
-        # Расчет сетки источникового/стокового члена для симуляции течений сжатия-расширения мягкого тела
-        # Коэффициент 25.0 управляет скоростью схождения/расхождения линий тока жидкости
-        target_div_grid = -blend * 25.0 * torch.sum(node_influence_normalized, dim=0, keepdim=True).unsqueeze(0)
+        target_div_grid = -blend * self.cfg['fluid_div_force'] * torch.sum(node_influence_normalized, dim=0, keepdim=True).unsqueeze(0)
         
         self.u, self.v = self.solver.project(self.u, self.v, self.wall_density, target_div_grid)
 
@@ -378,6 +478,41 @@ class PhaseVortexArena:
         u_pad, v_pad = F.pad(self.u, (1, 1, 1, 1), mode='circular'), F.pad(self.v, (1, 1, 1, 1), mode='circular')
         vorticity = 0.5 * (v_pad[:, :, 1:-1, 2:] - v_pad[:, :, 1:-1, :-2]) - 0.5 * (u_pad[:, :, 2:, 1:-1] - u_pad[:, :, :-2, 1:-1])
         self.smooth_vorticity = self.smooth_vorticity * 0.90 + (torch.sum(vorticity * self.player_density) / (torch.sum(self.player_density) + 1e-6)).item() * 0.10
+
+        # === АКТИВАЦИЯ И ТЕЛЕМЕТРИЯ РУНИЧЕСКИХ ЗОН ===
+        for zone in self.rune_zones:
+            if zone['completed']:
+                continue
+                
+            dx_z = self.player_pos[0] - zone['pos'][0]
+            dy_z = self.player_pos[1] - zone['pos'][1]
+            dist_z = torch.sqrt(dx_z**2 + dy_z**2).item()
+            
+            if dist_z < zone['radius'] * 1.2:
+                local_energy = abs(self.smooth_vorticity) * 2.5 + 0.15
+                zone['charge'] = min(1.0, zone['charge'] + local_energy * dt * 0.4)
+                
+                active_vels = pin_vel[~self.pin_captured]
+                v_com = active_vels.mean(dim=0) if active_vels.numel() > 0 else torch.zeros(2, device=self.device)
+                v_mag = torch.norm(v_com).item()
+                
+                accel = torch.norm(v_com - zone['last_vel']).item() / (dt + 1e-5)
+                zone['last_vel'].copy_(v_com)
+                
+                node_dists = torch.norm(self.pin_pos - self.player_pos, dim=1)
+                deform = torch.std(node_dists).item()
+                
+                zone['telemetry']['deformation'].append(float(deform))
+                zone['telemetry']['vorticity'].append(float(self.smooth_vorticity))
+                zone['telemetry']['acceleration'].append(float(accel))
+                zone['telemetry']['angles'].append(float(math.atan2(v_com[1].item(), v_com[0].item())))
+                zone['telemetry']['vel_mags'].append(float(v_mag))
+                
+                if zone['charge'] >= 1.0:
+                    zone['completed'] = True
+                    zone['classification'] = self._classify_control_style(zone['telemetry'])
+            else:
+                zone['charge'] = max(0.0, zone['charge'] - dt * 0.1)
 
         if self.pin_captured.sum().item() == 16:
             self.reset_world()

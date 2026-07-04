@@ -44,7 +44,7 @@ class FluidSolver:
             p_pad = F.pad(p, (1, 1, 1, 1), mode='circular')
             p = 0.25 * (p_pad[:, :, 1:-1, 2:] + p_pad[:, :, 1:-1, :-2] + 
                         p_pad[:, :, 2:, 1:-1] + p_pad[:, :, :-2, 1:-1] - div)
-            
+                
         p_pad = F.pad(p, (1, 1, 1, 1), mode='circular')
         u -= 0.5 * (p_pad[:, :, 1:-1, 2:] - p_pad[:, :, 1:-1, :-2])
         v -= 0.5 * (p_pad[:, :, 2:, 1:-1] - p_pad[:, :, :-2, 1:-1])
