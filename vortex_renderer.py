@@ -25,8 +25,11 @@ class VortexRenderer:
         
         grid = F.affine_grid(M, size=(1, 3, arena.res, arena.res), align_corners=True)
         
-        # ТОРОИДАЛЬНЫЙ РЕНДЕР: Тайлим матрицу лабиринта во все стороны бесконечно
-        grid = torch.remainder(grid + 1.0, 2.0) - 1.0
+        # Считываем опцию "скрыть повторяющиеся лабиринты" из конфигурации физики
+        hide_tiled = arena.cfg.get('hide_tiled_labyrinths', True)
+        if not hide_tiled:
+            # ТОРОИДАЛЬНОЕ ЗАВЕРТЫВАНИЕ: тайлим во все стороны
+            grid = torch.remainder(grid + 1.0, 2.0) - 1.0
         
         cam_density = F.grid_sample(arena.density, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
         cam_walls = F.grid_sample(arena.wall_density, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
@@ -51,9 +54,13 @@ class VortexRenderer:
         orig_val = cam_orig[0, 0].unsqueeze(-1)
         vis = torch.where(orig_val > 0.5, vis * 0.45 + torch.tensor([0.22, 0.05, 0.5], device=arena.device) * 0.55, vis)
         
-        rgb = (vis * 255).to(torch.uint8).cpu().numpy()
+        # === СВЕРХБЫСТРЫЙ РЕНДЕРИНГ: Аппаратное масштабирование сетки до размеров экрана на GPU ===
+        vis_transposed = vis.permute(2, 0, 1).unsqueeze(0)  # [1, 3, res, res]
+        scaled_vis = F.interpolate(vis_transposed, size=(self.WIDTH, self.HEIGHT), mode='bilinear', align_corners=True)
+        rgb = (scaled_vis[0].permute(1, 2, 0) * 255).to(torch.uint8).cpu().numpy()
+        
         surf = pygame.surfarray.make_surface(np.transpose(rgb, (1, 0, 2)))
-        return pygame.transform.smoothscale(surf, (self.WIDTH, self.HEIGHT))
+        return surf
 
     def draw_tension_lines(self, surface, arena):
         u_cpu, v_cpu = arena.u[0, 0].cpu().numpy(), arena.v[0, 0].cpu().numpy()
@@ -88,7 +95,39 @@ class VortexRenderer:
                             col_f = min(1.0, speed / 40.0)
                             pygame.draw.line(surface, (0, int(150 + col_f * 105), int(255 - col_f * 100)), (int(sx), int(sy)), (int(ex), int(ey)), 1)
 
+    def draw_coherence_bridges(self, surface, arena):
+        """Рисует упругие перемычки (когерентности) между всеми ядрами слайма"""
+        c0_matrix = arena.eeg_c0_matrix.cpu().numpy()
+        theta, cos_t, sin_t = -arena.player_angle, math.cos(-arena.player_angle), math.sin(-arena.player_angle)
+        
+        # Получаем экранные координаты всех 16 нод слайма
+        screen_coords = []
+        for i in range(16):
+            px, py = arena.pin_pos[i, 0].item(), arena.pin_pos[i, 1].item()
+            dx = (px - arena.player_pos[0].item() + self.WIDTH/2) % self.WIDTH - self.WIDTH/2
+            dy = (py - arena.player_pos[1].item() + self.HEIGHT/2) % self.HEIGHT - self.HEIGHT/2
+            
+            sx = self.WIDTH / 2.0 + (dx * cos_t + dy * sin_t) / self.ZOOM
+            sy = self.HEIGHT / 2.0 + (-dx * sin_t + dy * cos_t) / self.ZOOM
+            screen_coords.append((int(sx), int(sy)))
+            
+        # Рисуем линии связей
+        max_val = c0_matrix.max() if c0_matrix.max() > 1e-5 else 1.0
+        for i in range(16):
+            for j in range(i + 1, 16):
+                val = float(c0_matrix[i, j])
+                if val > 0.05:
+                    # Плавный цвет от бирюзового к ярко-розовому в зависимости от силы когерентности связи
+                    ratio = val / max_val
+                    col = (int(50 + 205 * ratio), int(255 - 155 * ratio), 255)
+                    thickness = max(1, int(ratio * 4.5))
+                    pygame.draw.line(surface, col, screen_coords[i], screen_coords[j], thickness)
+
     def draw_electrode_sensors(self, surface, arena):
+        # Рисуем упругие перемычки (когерентности) между всеми ядрами
+        if hasattr(arena, 'eeg_c0_matrix') and arena.eeg_c0_matrix.sum().item() > 0.05:
+            self.draw_coherence_bridges(surface, arena)
+
         theta, cos_t, sin_t = -arena.player_angle, math.cos(-arena.player_angle), math.sin(-arena.player_angle)
         
         for i in range(16):

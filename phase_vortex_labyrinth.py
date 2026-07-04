@@ -50,16 +50,26 @@ def main():
         arena = PhaseVortexArena(device, WIDTH, HEIGHT, COMPUTE_RES, seed=TOURNAMENT_SEED)
         renderer = VortexRenderer(WIDTH, HEIGHT, ZOOM_OUT_FACTOR)
         
-        show_lines = False
-        show_sensors = False
+        show_lines = True
+        show_sensors = True
 
         run_start_time = time.time()
         last_finish_time = 0.0
         
+        # Массив для расчета реального FPS/Гц симуляции
+        frame_times = []
+        
         running = True
         while running:
-            dt = min(0.032, clock.tick(60) / 1000.0)
+            # Снимаем жесткое ограничение в 60 FPS, давая симуляции работать на максимальной скорости видеокарты
+            dt = min(0.032, clock.tick() / 1000.0)
             time_sec = pygame.time.get_ticks() / 1000.0
+            
+            # Расчет частоты кадров
+            curr_time = time.time()
+            frame_times.append(curr_time)
+            frame_times = [t for t in frame_times if curr_time - t < 1.0]
+            current_fps = len(frame_times)
             
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: running = False
@@ -88,16 +98,26 @@ def main():
                     is_real_data = True
                     for slot_idx in active_slots:
                         q = driver.queues[slot_idx]
-                        while len(q) > 0:
-                            neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, :-1] = neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, 1:].clone()
-                            neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, -1] = torch.tensor(q.popleft())
+                        q_len = len(q)
+                        if q_len > 0:
+                            # === ВЕКТОРИЗОВАННАЯ ПАКЕТНАЯ ИНЖЕКЦИЯ СЭМПЛОВ ===
+                            # Извлекаем все сэмплы за раз и сдвигаем буфер на GPU одним шагом памяти
+                            samples = [q.popleft() for _ in range(q_len)]
+                            K = len(samples)
+                            if K >= 500:
+                                samples = samples[-500:]
+                                neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, :] = torch.tensor(samples, dtype=torch.float32).T
+                            else:
+                                neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, :-K] = neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, K:].clone()
+                                neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, -K:] = torch.tensor(samples, dtype=torch.float32).T
                     
-                    # Передаем текущую компрессию для динамического сужения STFT-фильтра к 18-36 Гц
-                    c0_spec, freqs, bci_vx, bci_vy, bci_tq = neuro_engine.get_predictive_ciplv(len(active_slots) * 16, ui_compression)
+                    # Считываем опцию сжатия частотного диапазона из конфигурации физического движка
+                    comp_val = ui_compression if arena.cfg.get('constrict_frequency_on_compression', True) else 0.0
+                    c0_spec, freqs, bci_vx, bci_vy, bci_tq = neuro_engine.get_predictive_ciplv(len(active_slots) * 16, comp_val)
                     eeg_c0_spectrum = c0_spec[:16, :16, :]
                     eeg_freqs = freqs
                     
-                    # Переносим BCI-интенции напрямую в управляющие векторы вместо их обнуления
+                    # Переносим BCI-интенции напрямую в управляющие векторы
                     raw_bci_vx = bci_vx.item() if hasattr(bci_vx, 'item') else float(bci_vx)
                     raw_bci_vy = bci_vy.item() if hasattr(bci_vy, 'item') else float(bci_vy)
                     raw_bci_tq = bci_tq.item() if hasattr(bci_tq, 'item') else float(bci_tq)
@@ -133,18 +153,27 @@ def main():
                 renderer.draw_electrode_sensors(screen, arena)
                 renderer.draw_ui(screen, arena) 
                 
+            # Отображаем текущий игровой таймер
             time_str = f"TIME: {current_run_time:06.3f}s"
             shadow = font.render(time_str, True, (0, 0, 0))
             text = font.render(time_str, True, (0, 255, 200))
             screen.blit(shadow, (22, 22))
             screen.blit(text, (20, 20))
             
+            # Выводим текущую частоту loop-цикла (FPS) в реальном времени
+            fps_str = f"FPS: {current_fps} Hz"
+            fps_color = (0, 255, 100) if current_fps >= 60 else (255, 100, 100)
+            f_shadow = font.render(fps_str, True, (0, 0, 0))
+            f_text = font.render(fps_str, True, fps_color)
+            screen.blit(f_shadow, (22, 52))
+            screen.blit(f_text, (20, 50))
+            
             if last_finish_time > 0:
                 prev_str = f"PREV: {last_finish_time:06.3f}s"
                 p_shadow = font.render(prev_str, True, (0, 0, 0))
                 p_text = font.render(prev_str, True, (150, 150, 150))
-                screen.blit(p_shadow, (22, 52))
-                screen.blit(p_text, (20, 50))
+                screen.blit(p_shadow, (22, 82))
+                screen.blit(p_text, (20, 80))
                 
             pygame.display.flip()
 
