@@ -78,12 +78,10 @@ class SymbioticEngineGPU:
         
         ciPLV = ciPLV.permute(1, 2, 0) # [C, C, F]
         
-        # 4. Взвешиваем ciPLV на мощность
-        power = torch.mean(torch.abs(X_valid), dim=2) # [C, F]
-        pair_power = torch.sqrt(power.unsqueeze(1) * power.unsqueeze(0)) # [C, C, F]
-        eeg_c0_spectrum = ciPLV * pair_power * 2.0
+        # 4. Чистая когерентность (удалено ошибочное взвешивание на pair_power, строго как в прошивке нейрогеймпада)
+        eeg_c0_spectrum = ciPLV
         
-        c0_global = torch.sum(eeg_c0_spectrum, dim=2)
+        c0_global = torch.mean(eeg_c0_spectrum, dim=2)
         c0_size = min(C, 16)
         c0_sub = c0_global[:c0_size, :c0_size]
         vx = torch.sum(c0_sub * self.dX[0:c0_size, 0:c0_size]) * 15.0

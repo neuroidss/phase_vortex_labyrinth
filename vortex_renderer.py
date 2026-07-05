@@ -42,11 +42,18 @@ class VortexRenderer:
         vis = vis * (1.0 - wall_val * 0.94) + wall_color * wall_val * 0.85
         
         player_val = cam_player[0, 0].unsqueeze(-1)
+        
+        # === ПРЕДЕЛЬНО ЧЁТКОЕ КОНТРАСТИРОВАНИЕ ГРАНИЦ НА УРОВНЕ РЕНДЕРА ===
+        # Срезает размытые фазовые переходы ("муть") на границах, оставляя слайм бритвенно-острым
+        player_val_contrasted = torch.clamp((player_val - 0.04) / 0.75, 0.0, 1.0)
+        
         jelly_color = torch.tensor([0.0, 0.45, 0.65], device=arena.device).view(1, 1, 3)
         membrane_color = torch.tensor([0.2, 1.0, 0.95], device=arena.device).view(1, 1, 3)
-        membrane_mask = torch.clamp(1.0 - torch.abs(player_val - 0.18) / 0.08, 0.0, 1.0) ** 3.0
         
-        vis = vis * (1.0 - player_val * 0.6) + jelly_color * player_val * 0.6
+        # Расчет мембраны на основе контрастной плотности
+        membrane_mask = torch.clamp(1.0 - torch.abs(player_val_contrasted - 0.18) / 0.08, 0.0, 1.0) ** 3.0
+        
+        vis = vis * (1.0 - player_val_contrasted * 0.6) + jelly_color * player_val_contrasted * 0.6
         vis = vis * (1.0 - membrane_mask * 0.8) + membrane_color * membrane_mask * 0.95
         
         cam_orig = F.grid_sample(arena.orig_obstacles, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
