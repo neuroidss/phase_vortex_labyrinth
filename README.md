@@ -3,9 +3,9 @@
 **Quantum Alchemy Reactor (QAR)** is an experimental Brain-Computer Interface (BCI) esports framework. It directly couples real-time human brain dynamics (via a 16-channel EEG micro-array *FreeEEG16-alpha2*) with a continuous, complex-valued 2D quantum hydrodynamic simulation (Navier-Stokes equations) evaluated on the GPU.
 
 This project operates on the **Mathematical Universe Hypothesis** and the philosophical projections of **Sir Roger Penrose's "Three Worlds" diagram**:
-*   **The Mental World** (User attention, BCI states, or high-fidelity Gamepad axis manipulations) projects onto...
-*   **The Platonic World** (Mathematical truths: Navier-Stokes fluid fields, the Kuramoto Coupled Phase equations, and Feigenbaum's non-linear limits) to manifest as dissipative, self-organizing structures in...
-*   **The Physical World** (The high-speed GPU render viewport and the 44100Hz spatialized procedural audio buffer).
+*   **The Mental World** (comprising user attention, BCI states, or high-fidelity Gamepad axis manipulations) projects onto the underlying mathematical structures of the simulation.
+*   **The Platonic World** (governed by mathematical truths, including the Navier-Stokes fluid fields, the Kuramoto Coupled Phase equations, and Feigenbaum's non-linear limits) processes these projections to organize the system.
+*   **The Physical World** (realized through the high-speed GPU render viewport and the 44100Hz spatialized procedural audio buffer) represents, displays, and sonifies these emergent, dissipative structures in real-time.
 
 ---
 
