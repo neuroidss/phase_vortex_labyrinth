@@ -7,7 +7,7 @@ import time
 import numpy as np
 import random
 import math
-from implicit_config import ALCHEMY_ENTITIES_CONFIG
+from implicit_config import ALCHEMY_ENTITIES_CONFIG, SEMANTIC_PILLS_DB
 
 try:
     from neuro_driver import RealNeuroDriver
@@ -17,6 +17,7 @@ except ImportError:
     HAS_NEURO = False
 
 from vortex_physics import PhaseVortexArena
+from vortex_combat import PhaseVortexCombat
 from vortex_renderer import VortexRenderer
 from input_manager import UnifiedInputManager
 
@@ -28,8 +29,9 @@ TOURNAMENT_SEED = 202607
 
 class AudioSonificationManager:
     """
-    Класс пространственной звуковой сонафикации локальной физики вокруг слайма.
-    Динамически адаптируется под реестр сущностей ALCHEMY_ENTITIES_CONFIG.
+    Spatial Audio Engine.
+    Translates local fluid dynamics, domain clashes, and spring tension snaps 
+    into instant acoustic feedback for closed-eyes neurofeedback execution.
     """
     def __init__(self, sample_rate=44100):
         self.sample_rate = sample_rate
@@ -37,6 +39,10 @@ class AudioSonificationManager:
         self.phase_g = 0.0
         self.phase_b = 0.0
         self.phase_wall = 0.0
+        
+        self.snap_click_samples = 0
+        self.heal_chime_samples = 0
+        self.heal_phase = 0.0
         
         if not pygame.mixer.get_init():
             pygame.mixer.pre_init(self.sample_rate, -16, 2, 512)
@@ -46,7 +52,6 @@ class AudioSonificationManager:
         self.channel.set_volume(0.35)
 
     def update(self, arena):
-        # 1. Получаем координаты слайма на расчетной сетке
         px, py = arena.player_pos[0].item(), arena.player_pos[1].item()
         px_grid = int((px / arena.WIDTH) * arena.res)
         py_grid = int((py / arena.HEIGHT) * arena.res)
@@ -54,7 +59,6 @@ class AudioSonificationManager:
         gx = max(0, min(arena.res - 1, px_grid))
         gy = max(0, min(arena.res - 1, py_grid))
         
-        # 2. Высокопроизводительный сбор физических величин из комплексных полей
         local_data = torch.stack([
             arena.density_complex[0, 0, gy, gx],
             arena.density_complex[0, 1, gy, gx],
@@ -69,7 +73,6 @@ class AudioSonificationManager:
         
         r_re, r_im, g_re, g_im, b_re, b_im, u_val, v_val, wall_val = local_data
         
-        # 3. Вычисление амплитуды и фазы по теореме Пифагора и тригонометрии
         R_val = math.hypot(r_re, r_im)
         G_val = math.hypot(g_re, g_im)
         B_val = math.hypot(b_re, b_im)
@@ -80,7 +83,6 @@ class AudioSonificationManager:
         
         speed = math.hypot(u_val, v_val)
         
-        # 4. Динамическая привязка частот-генераторов на основе ALCHEMY_ENTITIES_CONFIG
         ent_r = next((c for c in ALCHEMY_ENTITIES_CONFIG if c.get('rgb') == 0), None)
         ent_g = next((c for c in ALCHEMY_ENTITIES_CONFIG if c.get('rgb') == 2), None)
         ent_b = next((c for c in ALCHEMY_ENTITIES_CONFIG if c.get('rgb') == 4), None)
@@ -89,20 +91,31 @@ class AudioSonificationManager:
         base_g_freq = ent_g['freq'] if ent_g else 14.0
         base_b_freq = ent_b['freq'] if ent_b else 6.0
         
-        # Преобразуем низкие биологические частоты ЭЭГ в хорошо слышимый аудиодиапазон
-        freq_r = 300.0 + base_r_freq * 1.5 + 60.0 * math.sin(R_phase)
-        freq_g = 180.0 + base_g_freq * 3.0 + 30.0 * math.sin(G_phase)
-        freq_b = 90.0 + base_b_freq * 5.0 + 15.0 * math.sin(B_phase)
-        freq_wall = 1000.0                         # Сонар препятствий (Гц)
+        # Audio modulation includes an organic flutter based on player connectome integrity
+        p_integ = getattr(arena, 'player_integrity', 1.0)
+        coherence_flutter = 1.0 + (1.0 - p_integ) * 0.35 * math.sin(self.combat_time * 25.0 if hasattr(self, 'combat_time') else 0.0)
         
-        # Определение громкостей звуковых каналов на основе плотности полей
+        freq_r = (300.0 + base_r_freq * 1.5 + 60.0 * math.sin(R_phase)) * coherence_flutter
+        freq_g = (180.0 + base_g_freq * 3.0 + 30.0 * math.sin(G_phase)) * coherence_flutter
+        freq_b = (90.0 + base_b_freq * 5.0 + 15.0 * math.sin(B_phase)) * coherence_flutter
+        freq_wall = 1000.0
+        
         amp_r = min(0.5, R_val * 0.5)
         amp_g = min(0.5, G_val * 0.5)
         amp_b = min(0.5, B_val * 0.5)
         amp_noise = min(0.12, speed * 0.015)
         amp_wall = min(0.25, wall_val * 0.6)
         
-        # Синтез аудиоданных
+        # Capture tension snap triggers from combat arena
+        if hasattr(arena, 'last_snap_event') and arena.last_snap_event:
+            self.snap_click_samples = int(self.sample_rate * 0.05) 
+            arena.last_snap_event = False
+            
+        # Capture absorption healing triggers
+        if hasattr(arena, 'last_heal_event') and arena.last_heal_event:
+            self.heal_chime_samples = int(self.sample_rate * 0.25) 
+            arena.last_heal_event = False
+        
         num_samples = 512
         samples = np.zeros(num_samples, dtype=np.float32)
         dt = 1.0 / self.sample_rate
@@ -122,14 +135,28 @@ class AudioSonificationManager:
             sig_g = amp_g * math.sin(self.phase_g)
             sig_b = amp_b * math.sin(self.phase_b)
             sig_wall = amp_wall * math.sin(self.phase_wall)
+            
+            # Wind shear noise based on speed
             noise_val = (random.random() * 2.0 - 1.0) * amp_noise
             
-            samples[i] = sig_r + sig_g + sig_b + noise_val + sig_wall
+            # Synthesis of visceral snap/tear audio events (Xin Mo stress)
+            snap_val = 0.0
+            if self.snap_click_samples > 0:
+                snap_val = (random.random() * 2.0 - 1.0) * 0.4 * (self.snap_click_samples / (self.sample_rate * 0.05))
+                self.snap_click_samples -= 1
+                
+            # Synthesis of harmonious chime on phase absorption/healing
+            heal_val = 0.0
+            if self.heal_chime_samples > 0:
+                self.heal_phase += 2 * math.pi * 880.0 * dt 
+                self.heal_phase %= (2 * math.pi)
+                heal_val = 0.3 * math.sin(self.heal_phase) * (self.heal_chime_samples / (self.sample_rate * 0.25))
+                self.heal_chime_samples -= 1
+            
+            samples[i] = sig_r + sig_g + sig_b + noise_val + sig_wall + snap_val + heal_val
             
         samples = np.tanh(samples)
         audio_int16 = (samples * 32767).astype(np.int16)
-        
-        # Стерео-дублирование
         audio_stereo = np.column_stack((audio_int16, audio_int16))
         
         sound = pygame.sndarray.make_sound(audio_stereo)
@@ -139,7 +166,6 @@ class AudioSonificationManager:
         elif self.channel.get_queue() is None:
             self.channel.queue(sound)
 
-
 def main():
     try:
         pygame.init()
@@ -147,7 +173,7 @@ def main():
         pygame.joystick.init()
         
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption("Quantum Alchemy Reactor")
+        pygame.display.set_caption("Quantum Alchemy Reactor: Domain Clash")
         clock = pygame.time.Clock()
         font = pygame.font.SysFont("Consolas", 28, bold=True)
         
@@ -165,7 +191,17 @@ def main():
         else:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        arena = PhaseVortexArena(device, WIDTH, HEIGHT, COMPUTE_RES, seed=TOURNAMENT_SEED)
+        SCENE_LABYRINTH = 0
+        SCENE_COMBAT = 1
+        
+        current_scene = SCENE_LABYRINTH
+        combat_difficulty = 1
+        transition_timer = 0.0
+        
+        arena_lab = PhaseVortexArena(device, WIDTH, HEIGHT, COMPUTE_RES, seed=TOURNAMENT_SEED)
+        arena_com = None
+        active_arena = arena_lab
+        
         renderer = VortexRenderer(WIDTH, HEIGHT, ZOOM_OUT_FACTOR)
         audio_manager = AudioSonificationManager(sample_rate=44100)
         
@@ -173,7 +209,6 @@ def main():
         show_sensors = True
 
         run_start_time = time.time()
-        last_finish_time = 0.0
         frame_times = []
         
         running = True
@@ -189,16 +224,17 @@ def main():
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: running = False
                 if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_1:
-                        arena.cfg['vorticity_sensitivity'] = max(0.0, arena.cfg['vorticity_sensitivity'] - 0.05)
-                    if event.key == pygame.K_2:
-                        arena.cfg['vorticity_sensitivity'] = min(2.0, arena.cfg['vorticity_sensitivity'] + 0.05)
                     if event.key == pygame.K_l:
                         show_lines = not show_lines
                     if event.key == pygame.K_k:
                         show_sensors = not show_sensors
                     if event.key == pygame.K_ESCAPE:
                         input_manager.toggle_mouse_lock()
+                    if event.key == pygame.K_r:
+                        current_scene = SCENE_LABYRINTH
+                        arena_lab = PhaseVortexArena(device, WIDTH, HEIGHT, COMPUTE_RES, seed=TOURNAMENT_SEED + int(time_sec))
+                        active_arena = arena_lab
+                        combat_difficulty = 1
 
             is_real_data, eeg_vx, eeg_vy, eeg_tq, ui_compression, alch_freq, alch_spatial = input_manager.process_inputs(joysticks, dt)
             eeg_c0_spectrum = None
@@ -221,47 +257,74 @@ def main():
                                 neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, :-K] = neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, K:].clone()
                                 neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, -K:] = torch.tensor(samples, dtype=torch.float32).T
                     
-                    comp_val = ui_compression if arena.cfg.get('constrict_frequency_on_compression', True) else 0.0
+                    comp_val = ui_compression if active_arena.cfg.get('constrict_frequency_on_compression', True) else 0.0
                     c0_spec, freqs, bci_vx, bci_vy, bci_tq = neuro_engine.get_predictive_ciplv(len(active_slots) * 16, comp_val)
                     eeg_c0_spectrum = c0_spec[:16, :16, :]
                     eeg_freqs = freqs
                     
-                    raw_bci_vx = bci_vx.item() if hasattr(bci_vx, 'item') else float(bci_vx)
-                    raw_bci_vy = bci_vy.item() if hasattr(bci_vy, 'item') else float(bci_vy)
-                    raw_bci_tq = bci_tq.item() if hasattr(bci_tq, 'item') else float(bci_tq)
-                    
-                    eeg_vx = max(-1.0, min(1.0, raw_bci_vx / 350.0))
-                    eeg_vy = max(-1.0, min(1.0, raw_bci_vy / 350.0))
-                    eeg_tq = max(-1.0, min(1.0, raw_bci_tq / 60.0))
+                    eeg_vx = max(-1.0, min(1.0, float(bci_vx) / 350.0))
+                    eeg_vy = max(-1.0, min(1.0, float(bci_vy) / 350.0))
+                    eeg_tq = max(-1.0, min(1.0, float(bci_tq) / 60.0))
 
             if ui_compression > 0.0:
                 scale = 1.25 - ui_compression * 1.10
             else:
                 scale = 1.25 - ui_compression * 5.25
             
-            prev_captured = arena.pin_captured.sum().item()
-            
-            arena.step(dt, time_sec, eeg_c0_spectrum, eeg_vx, eeg_vy, eeg_tq, is_real_data, ui_compression, scale, eeg_freqs, alch_freq, alch_spatial)
-            
-            audio_manager.update(arena)
-            
-            new_captured = arena.pin_captured.sum().item()
-            
-            if new_captured == 0 and prev_captured == 16:
-                last_finish_time = time.time() - run_start_time
-                run_start_time = time.time()
+            # -----------------------------------------------------
+            # STATE MACHINE LOGIC WITH CONTINUOUS TELEMETRY PASSTHROUGH
+            # -----------------------------------------------------
+            if current_scene == SCENE_LABYRINTH:
+                arena_lab.step(dt, time_sec, eeg_c0_spectrum, eeg_vx, eeg_vy, eeg_tq, is_real_data, ui_compression, scale, eeg_freqs, alch_freq, alch_spatial)
                 
-            current_run_time = time.time() - run_start_time
+                # Check for successful Smelting and Portal Capture
+                if arena_lab.pill_created and arena_lab.pin_captured.all():
+                    pill_data = {
+                        'name': arena_lab.emergent_pill_name,
+                        'vector': SEMANTIC_PILLS_DB[arena_lab.emergent_pill_name]['vector'],
+                        'quality': arena_lab.pill_quality
+                    }
+                    arena_com = PhaseVortexCombat(device, WIDTH, HEIGHT, COMPUTE_RES, pill_data, difficulty=combat_difficulty)
+                    current_scene = SCENE_COMBAT
+                    active_arena = arena_com
+                    
+            elif current_scene == SCENE_COMBAT:
+                if transition_timer > 0.0:
+                    transition_timer -= dt
+                    if transition_timer <= 0.0:
+                        # Re-instance combat
+                        pill_data = {
+                            'name': arena_lab.emergent_pill_name,
+                            'vector': SEMANTIC_PILLS_DB[arena_lab.emergent_pill_name]['vector'],
+                            'quality': arena_lab.pill_quality
+                        }
+                        arena_com = PhaseVortexCombat(device, WIDTH, HEIGHT, COMPUTE_RES, pill_data, difficulty=combat_difficulty)
+                        active_arena = arena_com
+                else:
+                    arena_com.step(dt, eeg_c0_spectrum, eeg_vx, eeg_vy, eeg_tq, alch_freq, alch_spatial, is_real_data)
+                    if arena_com.winner is not None:
+                        transition_timer = 2.5 
+                        if arena_com.winner == "Player":
+                            combat_difficulty += 1
+                        else:
+                            combat_difficulty = max(1, combat_difficulty - 1)
+
+            # Pass raw gamepad inputs to the active arena object for diagnostic spectroscopy rendering
+            active_arena.raw_axes = input_manager.raw_axes
+            active_arena.raw_buttons = input_manager.raw_buttons
+
+            # Audio Sonification based on active arena
+            audio_manager.update(active_arena)
             
-            screen.blit(renderer.render_field(arena), (0, 0))
-            
+            # Rendering
+            screen.blit(renderer.render_field(active_arena), (0, 0))
             if show_lines:
-                renderer.draw_tension_lines(screen, arena)
+                renderer.draw_tension_lines(screen, active_arena)
             if show_sensors:
-                renderer.draw_electrode_sensors(screen, arena)
-                renderer.draw_ui(screen, arena) 
+                renderer.draw_electrode_sensors(screen, active_arena)
+                renderer.draw_ui(screen, active_arena) 
                 
-            time_str = f"TIME: {current_run_time:06.3f}s"
+            time_str = f"TIME: {time.time() - run_start_time:06.3f}s"
             shadow = font.render(time_str, True, (0, 0, 0))
             text = font.render(time_str, True, (0, 255, 200))
             screen.blit(shadow, (22, 22))
@@ -274,13 +337,6 @@ def main():
             screen.blit(f_shadow, (22, 52))
             screen.blit(f_text, (20, 50))
             
-            if last_finish_time > 0:
-                prev_str = f"PREV: {last_finish_time:06.3f}s"
-                p_shadow = font.render(prev_str, True, (0, 0, 0))
-                p_text = font.render(prev_str, True, (150, 150, 150))
-                screen.blit(p_shadow, (22, 82))
-                screen.blit(p_text, (20, 80))
-                
             pygame.display.flip()
 
         if HAS_NEURO: driver.scanner_running = False

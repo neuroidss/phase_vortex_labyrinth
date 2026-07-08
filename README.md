@@ -1,82 +1,115 @@
 # 🌌 QUANTUM ALCHEMY REACTOR: The Neuro-Esports Phase Engine
 
-**Quantum Alchemy Reactor (QAR)** is an experimental Brain-Computer Interface (BCI) esports framework. It directly couples a 16-channel EEG micro-array (*FreeEEG16-alpha2*) with a continuous 2D quantum hydrodynamic simulation (Navier-Stokes) evaluated on the GPU.
+**Quantum Alchemy Reactor (QAR)** is an experimental Brain-Computer Interface (BCI) esports framework. It directly couples real-time human brain dynamics (via a 16-channel EEG micro-array *FreeEEG16-alpha2*) with a continuous, complex-valued 2D quantum hydrodynamic simulation (Navier-Stokes equations) evaluated on the GPU.
 
-This project discards traditional game-state abstractions. It operates on the **Mathematical Universe Hypothesis** and Roger Penrose's "Three Worlds" concept: the idea that the Mental World (consciousness/EEG) can interface directly with the Platonic World (pure mathematics/Navier-Stokes), forcing tangible changes in the Physical/Simulated World. 
-
-We map the metaphysics of Chinese Cultivation (Xianxia / Donghua) directly onto nonlinear dynamics. Magic here is not fantasy; it is physics. Cultivation is the deliberate control of neuroplasticity and phase coherence.
-
----
-
-## 🔬 SCIENTIFIC FOUNDATION & DOIs
-
-The engine mechanics are strictly derived from peer-reviewed computational neuroscience and complex systems theory:
-
-1. **Phase Locking Value (ciPLV)**: The EEG spatial mapping uses the corrected imaginary Phase Locking Value to eliminate zero-lag volume conduction artifacts, isolating true neocortical synchronization. 
-   > *Bruña, R., Maestú, F., & Pereda, E. (2018). Phase locking value revisited: teaching new tricks to an old dog. Journal of Neural Engineering.* **[DOI: 10.1088/1741-2552/aacfe4]**
-2. **Working Memory 2.0 (Phase Control)**: The smelting phases (Theta/Shield vs. Gamma/Core) are based on the push-pull dynamics of superficial (Gamma) and deep (Alpha/Beta/Theta) cortical layers during volitional control.
-   > *Miller, E. K., Lundqvist, M., & Bastos, A. M. (2018). Working Memory 2.0. Neuron.* **[DOI: 10.1016/j.neuron.2018.09.023]**
-3. **The Edge of Chaos ($\delta \approx 4.669$)**: The creation of a "Divine Core" (a low-entropy soliton) is governed by Feigenbaum's constant. Structure emerges only when the system is pushed to the edge of bifurcation, forcing the export of entropy (hydrodynamic turbulence) into the surrounding environment.
-   > *Feigenbaum, M. J. (1978). Quantitative universality for a class of nonlinear transformations. Journal of Statistical Physics.* **[DOI: 10.1007/BF01020332]**
+This project operates on the **Mathematical Universe Hypothesis** and the philosophical projections of **Sir Roger Penrose's "Three Worlds" diagram**:
+*   **The Mental World** (User attention, BCI states, or high-fidelity Gamepad axis manipulations) projects onto...
+*   **The Platonic World** (Mathematical truths: Navier-Stokes fluid fields, the Kuramoto Coupled Phase equations, and Feigenbaum's non-linear limits) to manifest as dissipative, self-organizing structures in...
+*   **The Physical World** (The high-speed GPU render viewport and the 44100Hz spatialized procedural audio buffer).
 
 ---
 
-## 📜 LORE AS PHYSICS: The Hermeneutics of Wave Mechanics
+## 🔬 PEER-REVIEWED SCIENTIFIC FOUNDATION & DOIs
 
-The world has suffered a *Decoherence Event*. The semantic fabric of reality has shattered into isolated, high-entropy noise (Hundun). The player acts as a Resonator (Cultivator), using their brainwaves to re-bind these fragments into stable, functional structures—**Exocortex Pills**.
+Every mechanic in the QAR engine is derived from established computational neuroscience, complex systems, and non-equilibrium thermodynamics:
 
-| Xianxia (Donghua) Concept | Mathematical Implementation in QAR |
-| :--- | :--- |
-| **Qi / Intent (Yi)** | Complex phase gradient $\nabla\phi$. Directing fluid flow via wave displacement. |
-| **Elements (Fire, Water)** | Carrier wave bases in $\mathbb{C}^3$ space. Complex vector projections (`[1.0, 0.0, 0.0]`). |
-| **Inner Demon (Xin Mo)** | High-frequency phase noise in the raw EEG signal, causing constructive interference to fail. |
-| **Golden Core (Jindan)** | **Hydrodynamic Soliton**. A standing, self-sustaining wave born at the Edge of Chaos. |
-| **Heavenly Tribulation** | Hydrodynamic backpressure. Exporting entropy from the pill causes violent environmental turbulence that threatens to tear the player apart. |
-| **Aura / Domain** | The radial wave emission of a forged Pill, which dampens or destructively interferes with rogue frequencies. |
-
----
-
-## 🔄 THE CORE LOOP: Neuro-Action Roguelite
-
-The gameplay consists of three distinct phases that transition seamlessly:
-
-### 1. The Labyrinth (Strategic Gacha & Resource Gathering)
-The labyrinth acts as a random initial state generator. It spawns scattered semantic resonators (Cognits). Because the drop is stochastic, players cannot rely on hardcoded "meta-builds." If a player lacks a Gamma (Fire) cognit, they must either pivot to synthesizing a Theta (Yin) pill or artificially compensate for the missing energy by over-stressing their own neural coherence.
-
-### 2. The Cauldron (Thermodynamic Smelting)
-There are no scripted recipes. The type of pill forged is determined by the **cosine similarity** between the final complex state of the fluid and the semantic database.
-* **The Bifurcation Pump**: A perfect pill (*Divine Core*) cannot be made passively. The player must hold the system exactly on the Edge of Chaos. The system then rapidly exports entropy (noise) outward, generating massive turbulence in the environment while crystallizing the core.
-
-### 3. The Arena (Domain Clash)
-*Currently in architecture design phase.*
-Upon successful synthesis, the Pill is integrated into the player's Slime, turning it into a Domain generator. Combat is not about depleting HP bars; it is about **Structural Cohesion**. Enemies project phase waves; if an enemy's phase destructively interferes with yours, your Slime's nodes physically rip apart. The quality of the pill synthesized in the Cauldron dictates the stability and penetration power of your Domain.
+1.  **Corrected Imaginary Phase Locking Value (ciPLV)**: Used in the BCI spatial mapping to isolate true neocortical phase synchronization and completely eliminate zero-lag volume conduction.
+    > *Bruña, R., Maestú, F., & Pereda, E. (2018). Phase locking value revisited: teaching new tricks to an old dog. Journal of Neural Engineering.* **[DOI: 10.1088/1741-2552/aacfe4]**
+2.  **Working Memory 2.0 (Phase Rhythms)**: The push-pull mechanics of superficial (Gamma) and deep (Alpha/Beta/Theta) cortical layers during volitional focus dictate the game's spectral and spatial control axes.
+    > *Miller, E. K., Lundqvist, M., & Bastos, A. M. (2018). Working Memory 2.0. Neuron.* **[DOI: 10.1016/j.neuron.2018.09.023]**
+3.  **The Kuramoto Model (Connectome Coherence)**: Slime structural health is modeled as a network of coupled phase oscillators.
+    > *Kuramoto, Y. (1984). Chemical Oscillations, Waves, and Turbulence. Springer.* **[DOI: 10.1007/978-3-642-69689-3]**
+4.  **The Edge of Chaos & Period-Doubling Bifurcations**: The thermodynamic extraction of entropy in the Cauldron and the chaotic clash boundaries in the Arena are governed by Feigenbaum's scaling.
+    > *Feigenbaum, M. J. (1978). Quantitative universality for a class of nonlinear transformations. Journal of Statistical Physics.* **[DOI: 10.1007/BF01020332]**
+5.  **Penrose Three-World Ontology**: The epistemological foundation of the Mental-Platonic-Physical projection interface.
+    > *Penrose, R. (1994). Shadows of the Mind: A Search for the Missing Science of Consciousness. Oxford University Press.* **[ISBN: 978-0198539780]**
 
 ---
 
-## 🎮 BCI vs. GAMEPAD: The Esports Balance
+## 📜 LORE AS COGNITIVE PHYSICS: THE ALCHEMICAL DICTIONARY
 
-QAR supports both direct neural input via *FreeEEG16* and standard Gamepad emulation. 
+The world of QAR has suffered a *Decoherence Event*, shattering semantic reality into high-entropy phase noise (*Hundun*). The player acts as a *Cultivator* (Phase-locked operator) using internal mental coherence to forge islands of low-entropy meaning (*Pills*) and defend them on the combat Arena.
 
-* **Gamepad (Slew-Rate Limited)**: Players control phases via button combinations and temperature via stick torque. The skill floor is accessible, but human finger reaction time caps at ~150ms. 
-* **EEG (The Advantage of Organic Chaos)**: Brain states shift in 20-40ms. Furthermore, a human brain in a "flow state" generates organic fractal noise that a deterministic bot or gamepad player cannot predict. A trained BCI-athlete can generate *Adaptive Resonance*, overpowering gamepad players through sheer biological anti-fragility.
-
----
-
-## 🔊 SENSORY IMMERSION: Zero-Latency Sonification
-
-QAR uses 100% procedural sonification with ~11ms latency. There are no pre-recorded sound effects.
-* Local amplitudes and phases of the complex channels (RGB) drive binaural carrier tones (Theta, SMR, Gamma).
-* Fluid velocity vector fields $(u, v)$ modulate spatial pink noise (fluid shear).
-* Wall proximity triggers sonar-like high-frequency feedback.
-Players can close their eyes and smelt a Divine Core relying entirely on auditory phase-matching (binaural beats).
+| Xianxia Concept | Physics/Signal Equivalent | Role in the Reactor Engine |
+| :--- | :--- | :--- |
+| **Jing (Essence / Цзин)** | **Yin-Water (6Hz Theta)** | Low-frequency structural container. Slows kinetic chaos and stabilizes the boundary. |
+| **Qi (Energy / Ци)** | **SMR Catalyst (14Hz)** | The sensorimotor bridge. Synchronizes and integrates opposite polarities into a crystal lattice. |
+| **Shen (Spirit / Шэнь)** | **Yang-Fire (80Hz Gamma)** | High-frequency informational activation. Generates torque and thermal kinetic energy. |
+| **Xin Mo (Inner Demon)** | **Phase Noise & Artifacts** | Signal desynchronization (scramble) degrading the Kuramoto Order Parameter. |
+| **Jindan (Golden Core)** | **Hydrodynamic Soliton** | A self-preserving standing wave packet born at the Edge of Chaos ($\delta \approx 4.669$). |
+| **Tribulation (Heavenly Wrath)**| **Entropy Backpressure** | The violent, turbulent recoil generated when purging phase noise from the core into the labyrinth. |
+| **Domain (Aura)** | **Resonant Wave Emission** | Radial projection of your Pill's vector, imposing your physical rules onto the surrounding fluid. |
 
 ---
 
-## 🚀 ROADMAP
+## 🔄 THE ENDLESS ESPORTS LOOP: DRAFT $\to$ SMELT $\to$ CLASH
 
-1. **Arena Combat Module (`vortex_combat.py`)**: 1v1 isolated phase duels against Rogue Cultivators (Bots) evaluating structural cohesion.
-2. **Spectral Pattern Packing (Harmonics)**: Utilizing the $C^3$ channels not as flat colors, but as a Fundamental Frequency ($f$) and its Harmonics ($2f, 3f$). Achieving the Edge of Chaos will spawn visible Moiré fractals ("Heavenly Runes") on the pill, mathematically proving low entropy.
-3. **LLM Generative Alchemy**: Passing the final $\mathbb{C}^3$ vector to an LLM to dynamically generate the Pill's name, lore, and domain properties based on its distance from standard semantic attractors.
+QAR operates as a highly competitive *Neuro-Action Roguelite* consisting of three interconnected phases:
+
+### Phase 1: The Labyrinth (Strategic Gacha & Draft)
+The stochastic maze generates a random set of raw, high-entropy *Cognits* (phase resonators) [vortex_maze.py]. Players must navigate and collect them [vortex_physics.py]. Because the spawn pool is random, players must adapt on the fly: if they fail to gather a balanced triad, they must prepare to smelt a highly volatile unbalanced core, requiring immense BCI mental compensation [vortex_physics.py].
+
+### Phase 2: The Cauldron (Bifurcation Smelting)
+Ingredients dissolve into the $C^3$ complex-valued fluid [vortex_physics.py].
+*   **No Hardcoded Recipes**: The resulting pill's identity is evaluated using **cosine similarity** between the cauldron's integrated phase state and the semantic database (`SEMANTIC_PILLS_DB`) [vortex_physics.py].
+*   **The Bifurcation Sieve**: To forge a *Divine Core*, players must hold the system precisely at the Edge of Chaos [vortex_physics.py]. The cauldron then acts as a dissipative pump, recursively separating phase noise (scaling via Feigenbaum's $\delta = 4.669$) and blasting the high-entropy turbulence outward into the maze [vortex_physics.py].
+
+### Phase 3: The Arena (Domain Clash Endless Ladder)
+Upon passing the portal, the forged Pill's vector is propped up as your permanent resonant Core [vortex_physics.py]. You are teleported to a circular arena to face an endless ladder of Rogue Cultivators (Bots) whose difficulty scales infinitely [vortex_combat.py].
+
+*   **Continuous Health (Kuramoto Order Parameter $H$)**: Binary HP is removed [vortex_combat.py]. Health is represented by **Phase Integrity** [vortex_combat.py, vortex_renderer.py]. External hostile waves scramble the phases of your 16 softbody nodes, driving $H \to 0$ [vortex_combat.py].
+*   **Visceral Structural Damage**: Your spring stiffness is proportional to your Phase Integrity ($k \propto H$) [vortex_combat.py]. As integrity drops, your slime turns soft and is physically stretched by fluid shear [vortex_combat.py]. When a spring exceeds its tensile limit, it **snaps permanently**, and the severed node bleeds phase noise into your own domain [vortex_combat.py].
+*   **Domain Rule Imposition**: The fluid is a battleground [vortex_combat.py]. In regions where your similarity exceeds the bot's ($S_p > S_b$), **you control the physical constants of the fluid** [vortex_combat.py]. If you are Yang, you accelerate whirlpools; if Yin, you freeze the fluid to paralyze the bot [vortex_combat.py].
+*   **Active Domain Pulsing**: By aligning your physical triggers with your core frequency, you charge and detonate Domain Shockwaves, physically blasting the opponent's nodes apart [vortex_combat.py].
+
+---
+
+## 🎮 THE ESPORTS INPUT BALANCE: GAMEPAD VS. 120-JET BCI
+
+*   **The Gamepad (Deterministic Precision)**: Uses trigger/bumper half-axes to morph the slime's shape (contracting into a stiff Core or expanding into a loose, receptive Shield) and shift frequencies manually [input_manager.py]. Gamepad inputs are highly responsive but constrained by discrete human motor limits (~150ms) [input_manager.py].
+*   **The BCI (Organic Dominance)**: Brain state transitions occur in 20-40ms. When using the headset, the **120 individual cross-coherence pairs** among the 16 nodes are mapped to dynamic fluid micro-jets [vortex_combat.py]. This creates an organic, fractal "buffer" shield around the EEG player, allowing them to absorb shear stress that would immediately shatter a rigid gamepad player [vortex_combat.py].
+
+---
+
+## 🔊 ZERO-LATENCY PROCEDURAL SONIFICATION
+
+QAR generates 100% procedural stereo audio with ~11ms latency to enable auditory-only navigation:
+*   **Continuous Carrier Waves**: Amplitudes of Theta, SMR, and Gamma dictate the volume of binaural carrier frequencies [phase_vortex_labyrinth.py].
+*   **Phase Modulation**: Spatial phase gradients modulate the pitch in real-time — you *hear* the phase shifts [phase_vortex_labyrinth.py].
+*   **Kinetic Shear Noise**: Local velocity modulates wind-shear pink noise [phase_vortex_labyrinth.py].
+*   **Visceral Combat Sensation**: Structural spring tears trigger sharp, high-frequency static pop/clicks, while successful phase energy absorption synthesizes beautiful, pure harmonic chimes [phase_vortex_labyrinth.py].
+
+---
+
+## 🛠 REAL-TIME SPECTROSCOPY PANEL (BATTLE DEBUG)
+
+During combat, the expanded red panel provides a comprehensive physical diagnostic overview of the non-linear interaction:
+
+```
+[ CONNECTOME SPECTROSCOPY (DIAG) ]
+----------------------------------
+Your Core   : Deep Yin Core
+Rogue Core  : Turbulent Anomaly
+Coupling (K): 16.7 vs 14.2
+- - - - - - - - - - - - - - - - - 
+Raw Axes    : [0.00, 0.00, -1.00, 0.00, 0.00, 0.00]
+Raw Btns    : [2, 5]
+Freq Output : -1.00 (Theta)
+Spat Output : -1.00 (Shield)
+- - - - - - - - - - - - - - - - - 
+Your Dissonance: 0.24
+Bot Dissonance : 0.81
+Your Density   : 7.123
+Bot Density    : 1.154
+Your Jitter F  : 14.5 N
+Bot Jitter F   : 142.3 N
+Absorbed E     : 4.12 / 12.0
+Clash Border   : 84.3% (Feigenbaum)
+- - - - - - - - - - - - - - - - - 
+Phase Integrity (P): 94.2%  [|||||||||.]
+Phase Integrity (B): 32.1%  [|||.......]
+```
+*(The circular phase radar on the right visually maps the 16 nodes rotating and dispersing on the polar unit circle in real-time).*
 
 ---
 *Engineered for cognitive connectome mapping and competitive BCI Esports. AGPL v3 licensed.*

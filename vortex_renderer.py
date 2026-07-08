@@ -12,6 +12,7 @@ class VortexRenderer:
         self.HEIGHT = height
         self.ZOOM = zoom_factor
         self.font = None
+        self.title_font = None
 
     def render_field(self, arena):
         theta = -arena.player_angle
@@ -27,7 +28,7 @@ class VortexRenderer:
         
         grid = F.affine_grid(M, size=(1, 3, arena.res, arena.res), align_corners=True)
         
-        hide_tiled = arena.cfg.get('hide_tiled_labyrinths', True)
+        hide_tiled = getattr(arena, 'cfg', {}).get('hide_tiled_labyrinths', True)
         if not hide_tiled:
             grid = torch.remainder(grid + 1.0, 2.0) - 1.0
         
@@ -42,15 +43,50 @@ class VortexRenderer:
         wall_color = torch.tensor([0.9, 0.15, 0.6], device=arena.device).view(1, 1, 3)
         vis = vis * (1.0 - wall_val * 0.94) + wall_color * wall_val * 0.85
         
+        # Player Slime rendering with real-time color morphing based on Frequency input
         player_val = cam_player[0, 0].unsqueeze(-1)
         player_val_contrasted = torch.clamp((player_val - 0.04) / 0.75, 0.0, 1.0)
-        jelly_color = torch.tensor([0.0, 0.45, 0.65], device=arena.device).view(1, 1, 3)
-        membrane_color = torch.tensor([0.2, 1.0, 0.95], device=arena.device).view(1, 1, 3)
+        
+        p_color = [0.0, 0.45, 0.65] 
+        if hasattr(arena, 'player_pill_name') and arena.player_pill_name in SEMANTIC_PILLS_DB:
+            c = SEMANTIC_PILLS_DB[arena.player_pill_name]['color']
+            p_color = [c[0]/255.0, c[1]/255.0, c[2]/255.0]
+            
+        # Frequency morph: shift towards red (Gamma) or purple (Theta)
+        if hasattr(arena, 'player_freq_val'):
+            freq_shift = float(arena.player_freq_val)
+            if freq_shift > 0.0:
+                p_color[0] = min(1.0, p_color[0] + freq_shift * 0.7)
+                p_color[1] = max(0.0, p_color[1] - freq_shift * 0.4)
+            else:
+                p_color[2] = min(1.0, p_color[2] + abs(freq_shift) * 0.8)
+                p_color[0] = min(1.0, p_color[0] + abs(freq_shift) * 0.3)
+                
+        jelly_color = torch.tensor(p_color, device=arena.device).view(1, 1, 3)
+        membrane_color = torch.tensor([1.0, 1.0, 1.0], device=arena.device).view(1, 1, 3)
         membrane_mask = torch.clamp(1.0 - torch.abs(player_val_contrasted - 0.18) / 0.08, 0.0, 1.0) ** 3.0
         
         vis = vis * (1.0 - player_val_contrasted * 0.6) + jelly_color * player_val_contrasted * 0.6
         vis = vis * (1.0 - membrane_mask * 0.8) + membrane_color * membrane_mask * 0.95
         
+        # Bot Slime rendering
+        if hasattr(arena, 'bot_density'):
+            cam_bot = F.grid_sample(arena.bot_density, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
+            bot_val = cam_bot[0, 0].unsqueeze(-1)
+            bot_val_contrasted = torch.clamp((bot_val - 0.04) / 0.75, 0.0, 1.0)
+            
+            b_color = (0.6, 0.0, 0.0) 
+            if hasattr(arena, 'bot_pill_name') and arena.bot_pill_name in SEMANTIC_PILLS_DB:
+                c = SEMANTIC_PILLS_DB[arena.bot_pill_name]['color']
+                b_color = [c[0]/255.0, c[1]/255.0, c[2]/255.0]
+                
+            bot_jelly = torch.tensor(b_color, device=arena.device).view(1, 1, 3)
+            bot_membrane = torch.tensor([1.0, 0.2, 0.2], device=arena.device).view(1, 1, 3)
+            b_membrane_mask = torch.clamp(1.0 - torch.abs(bot_val_contrasted - 0.18) / 0.08, 0.0, 1.0) ** 3.0
+            
+            vis = vis * (1.0 - bot_val_contrasted * 0.8) + bot_jelly * bot_val_contrasted * 0.8
+            vis = vis * (1.0 - b_membrane_mask * 0.9) + bot_membrane * b_membrane_mask * 0.9
+
         cam_orig = F.grid_sample(arena.orig_obstacles, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
         orig_val = cam_orig[0, 0].unsqueeze(-1)
         vis = torch.where(orig_val > 0.5, vis * 0.45 + torch.tensor([0.22, 0.05, 0.5], device=arena.device) * 0.55, vis)
@@ -95,86 +131,195 @@ class VortexRenderer:
                             col_f = min(1.0, speed / 40.0)
                             pygame.draw.line(surface, (0, int(150 + col_f * 105), int(255 - col_f * 100)), (int(sx), int(sy)), (int(ex), int(ey)), 1)
 
-    def draw_coherence_bridges(self, surface, arena):
-        c0_matrix = arena.eeg_c0_matrix.cpu().numpy()
-        theta, cos_t, sin_t = -arena.player_angle, math.cos(-arena.player_angle), math.sin(-arena.player_angle)
-        
-        screen_coords = []
-        for i in range(16):
-            px, py = arena.pin_pos[i, 0].item(), arena.pin_pos[i, 1].item()
-            dx = (px - arena.player_pos[0].item() + self.WIDTH/2) % self.WIDTH - self.WIDTH/2
-            dy = (py - arena.player_pos[1].item() + self.HEIGHT/2) % self.HEIGHT - self.HEIGHT/2
-            
-            sx = self.WIDTH / 2.0 + (dx * cos_t + dy * sin_t) / self.ZOOM
-            sy = self.HEIGHT / 2.0 + (-dx * sin_t + dy * cos_t) / self.ZOOM
-            screen_coords.append((int(sx), int(sy)))
-            
-        max_val = c0_matrix.max() if c0_matrix.max() > 1e-5 else 1.0
-        for i in range(16):
-            for j in range(i + 1, 16):
-                val = float(c0_matrix[i, j])
-                if val > 0.05:
-                    ratio = val / max_val
-                    col = (int(50 + 205 * ratio), int(255 - 155 * ratio), 255)
-                    thickness = max(1, int(ratio * 4.5))
-                    pygame.draw.line(surface, col, screen_coords[i], screen_coords[j], thickness)
-
     def draw_electrode_sensors(self, surface, arena):
-        if hasattr(arena, 'eeg_c0_matrix') and arena.eeg_c0_matrix.sum().item() > 0.05:
-            self.draw_coherence_bridges(surface, arena)
-
         theta, cos_t, sin_t = -arena.player_angle, math.cos(-arena.player_angle), math.sin(-arena.player_angle)
         
+        # Draw player nodes (cyan)
         for i in range(16):
-            is_cap = arena.pin_captured[i]
-            col = (255, 0, 255) if is_cap else (0, 255, 255)
+            if hasattr(arena, 'player_edge_intact') and not arena.player_edge_intact[i]: continue 
             
-            px, py = arena.pin_pos[i, 0].item(), arena.pin_pos[i, 1].item()
+            px, py = (arena.pin_pos[i, 0].item(), arena.pin_pos[i, 1].item()) if hasattr(arena, 'pin_pos') else (arena.player_pin_pos[i, 0].item(), arena.player_pin_pos[i, 1].item())
             dx = (px - arena.player_pos[0].item() + self.WIDTH/2) % self.WIDTH - self.WIDTH/2
             dy = (py - arena.player_pos[1].item() + self.HEIGHT/2) % self.HEIGHT - self.HEIGHT/2
-            
             sx = self.WIDTH / 2.0 + (dx * cos_t + dy * sin_t) / self.ZOOM
             sy = self.HEIGHT / 2.0 + (-dx * sin_t + dy * cos_t) / self.ZOOM
             
-            pygame.draw.circle(surface, (*col, 100), (int(sx), int(sy)), 8, 1)
-            pygame.draw.circle(surface, col, (int(sx), int(sy)), 2)
-
-    def draw_rune_zones(self, surface, arena):
-        if not hasattr(arena, 'rune_zones') or not arena.rune_zones:
-            return
+            pygame.draw.circle(surface, (0, 255, 255, 100), (int(sx), int(sy)), 8, 1)
+            pygame.draw.circle(surface, (0, 255, 255), (int(sx), int(sy)), 2)
             
-        theta = -arena.player_angle
-        cos_t, sin_t = math.cos(theta), math.sin(theta)
+        # Draw bot nodes (deep orange/red) if in combat arena
+        if hasattr(arena, 'bot_pin_pos'):
+            for i in range(16):
+                if not arena.bot_edge_intact[i]: continue
+                px, py = arena.bot_pin_pos[i, 0].item(), arena.bot_pin_pos[i, 1].item()
+                dx = (px - arena.player_pos[0].item() + self.WIDTH/2) % self.WIDTH - self.WIDTH/2
+                dy = (py - arena.player_pos[1].item() + self.HEIGHT/2) % self.HEIGHT - self.HEIGHT/2
+                sx = self.WIDTH / 2.0 + (dx * cos_t + dy * sin_t) / self.ZOOM
+                sy = self.HEIGHT / 2.0 + (-dx * sin_t + dy * cos_t) / self.ZOOM
+                
+                pygame.draw.circle(surface, (255, 100, 0, 100), (int(sx), int(sy)), 8, 1)
+                pygame.draw.circle(surface, (255, 100, 0), (int(sx), int(sy)), 2)
+
+    def draw_combat_debug(self, surface, arena):
+        """ Draws a real-time spectroscopy panel with coupled oscillator diagnostic visuals """
+        panel_w, panel_h = 320, 310
+        panel_x, panel_y = self.WIDTH - panel_w - 15, 15
+        
+        s = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        s.fill((15, 10, 20, 215)) 
+        surface.blit(s, (panel_x, panel_y))
+        pygame.draw.rect(surface, (255, 100, 100), (panel_x, panel_y, panel_w, panel_h), 1)
         
         if self.font is None:
-            self.font = pygame.font.SysFont("Consolas", 14, bold=True)
+            self.font = pygame.font.SysFont("Consolas", 13, bold=True)
             
-        for zone in arena.rune_zones:
-            zx, zy = zone['pos'][0].item(), zone['pos'][1].item()
+        title = self.font.render("CONNECTOME SPECTROSCOPY (DIAG)", True, (255, 100, 100))
+        surface.blit(title, (panel_x + 10, panel_y + 8))
+        
+        y_offset = panel_y + 30
+        
+        # Raw Diagnostic Extraction
+        raw_ax = getattr(arena, 'raw_axes', [])
+        raw_btn = getattr(arena, 'raw_buttons', [])
+        
+        if raw_ax:
+            ax_str = ", ".join([f"{val:.2f}" for val in raw_ax[:6]])
+            ax_line = f"Raw Axes: [{ax_str}]"
+        else:
+            ax_line = "Raw Axes: No Gamepad Driver"
             
-            dx = (zx - arena.player_pos[0].item() + self.WIDTH/2) % self.WIDTH - self.WIDTH/2
-            dy = (zy - arena.player_pos[1].item() + self.HEIGHT/2) % self.HEIGHT - self.HEIGHT/2
-            
-            sx = self.WIDTH / 2.0 + (dx * cos_t + dy * sin_t) / self.ZOOM
-            sy = self.HEIGHT / 2.0 + (-dx * sin_t + dy * cos_t) / self.ZOOM
-            
-            if 0 <= sx <= self.WIDTH and 0 <= sy <= self.HEIGHT:
-                rad = int(zone['radius'] / self.ZOOM)
+        if raw_btn:
+            pressed_btns = [i for i, btn in enumerate(raw_btn) if btn]
+            btn_line = f"Raw Btns: {pressed_btns}"
+        else:
+            btn_line = "Raw Btns: None"
+
+        # Calculate continuous float health based on Kuramoto phase order parameter H
+        p_integ = getattr(arena, 'player_integrity', 1.0)
+        b_integ = getattr(arena, 'bot_integrity', 1.0)
+
+        metrics = [
+            f"Your Core   : {arena.player_pill_name}",
+            f"Rogue Core  : {arena.bot_pill_name}",
+            f"Coupling (K): {arena.player_K:.1f} vs {arena.bot_K:.1f}",
+            "-" * 37,
+            ax_line,
+            btn_line,
+            f"Freq (Z/C/LB/RB): {arena.player_freq_val:.2f}",
+            f"Spat (X/V/L2/R2): {arena.player_spatial_val:.2f}",
+            "-" * 37,
+            f"Your Dissonance: {arena.player_shear_stress:.2f}",
+            f"Bot Dissonance : {arena.bot_shear_stress:.2f}",
+            f"Your Density   : {getattr(arena, 'player_density_val', 0.0):.3f}",
+            f"Bot Density    : {getattr(arena, 'bot_density_val', 0.0):.3f}",
+            f"Your Jitter F  : {getattr(arena, 'player_jitter_avg', 0.0):.1f} N",
+            f"Bot Jitter F   : {getattr(arena, 'bot_jitter_avg', 0.0):.1f} N",
+            f"Absorbed E     : {arena.energy_absorbed:.2f} / 12.0",
+            f"Clash Border   : {arena.clash_intensity * 100:.1f}% (Feigenbaum)",
+            "-" * 37,
+            f"Phase Integrity (P): {p_integ*100:.1f}%",
+            f"Phase Integrity (B): {b_integ*100:.1f}%",
+        ]
+        
+        for met in metrics:
+            if met.startswith("-"):
+                text = self.font.render(met, True, (255, 100, 100))
+            elif "Axes" in met or "Btns" in met:
+                text = self.font.render(met, True, (0, 255, 100) if raw_ax else (150, 150, 150))
+            elif "Dissonance" in met or "Clash" in met:
+                text = self.font.render(met, True, (255, 200, 150))
+            elif "Absorbed" in met:
+                text = self.font.render(met, True, (100, 255, 100) if arena.energy_absorbed > 0 else (255, 255, 255))
+            elif "Freq" in met or "Spat" in met:
+                text = self.font.render(met, True, (0, 255, 255))
+            elif "Jitter" in met:
+                text = self.font.render(met, True, (255, 100, 100) if "Bot" in met else (100, 255, 255))
+            elif "Integrity" in met:
+                val = p_integ if "(P)" in met else b_integ
+                col = (0, 255, 100) if val > 0.7 else ((255, 200, 0) if val > 0.4 else (255, 50, 50))
+                text = self.font.render(met, True, col)
+            else:
+                text = self.font.render(met, True, (255, 255, 255))
+            surface.blit(text, (panel_x + 12, y_offset))
+            y_offset += 12
+
+        # Draw the polari-oscillator Kuramoto Circle (Connectome Phase Radar)
+        cx, cy = panel_x + panel_w - 45, panel_y + 110
+        pygame.draw.circle(surface, (50, 40, 60), (cx, cy), 30, 1)
+        
+        p_phases = getattr(arena, 'player_node_phases', None)
+        if p_phases is not None:
+            p_phases_cpu = p_phases.cpu().numpy()
+            for i in range(16):
+                px = cx + int(27 * math.cos(p_phases_cpu[i]))
+                py = cy + int(27 * math.sin(p_phases_cpu[i]))
+                pygame.draw.circle(surface, (0, 255, 200), (px, py), 2)
                 
-                if zone['completed']:
-                    clf = zone['classification']
-                    color = (0, 255, 120)
-                    pygame.draw.circle(surface, color, (int(sx), int(sy)), rad, 3)
-                    text_str = f"RUNE: {clf.upper()}"
-                    text_main = self.font.render(text_str, True, color)
-                    surface.blit(text_main, (int(sx) - text_main.get_width()//2, int(sy) - rad - 20))
-                else:
-                    pulse = int(100 + 40 * math.sin(pygame.time.get_ticks() * 0.005))
-                    color = (pulse, pulse, 50)
-                    pygame.draw.circle(surface, color, (int(sx), int(sy)), rad, 1)
+        b_phases = getattr(arena, 'bot_node_phases', None)
+        if b_phases is not None:
+            b_phases_cpu = b_phases.cpu().numpy()
+            for i in range(16):
+                bx = cx + int(18 * math.cos(b_phases_cpu[i]))
+                by = cy + int(18 * math.sin(b_phases_cpu[i]))
+                pygame.draw.circle(surface, (255, 50, 100), (bx, by), 2)
+
+    def draw_combat_ui(self, surface, arena):
+        """ Render UI specific to the Arena Domain Clash """
+        if self.font is None:
+            self.font = pygame.font.SysFont("Consolas", 18, bold=True)
+            self.title_font = pygame.font.SysFont("Consolas", 42, bold=True)
+            
+        self.draw_combat_debug(surface, arena)
+            
+        # Top HUD
+        diff_text = self.font.render(f"TRIBULATION LEVEL: {arena.difficulty}", True, (255, 100, 100))
+        surface.blit(diff_text, (self.WIDTH // 2 - diff_text.get_width()//2, 20))
+        
+        p_integ = getattr(arena, 'player_integrity', 1.0)
+        b_integ = getattr(arena, 'bot_integrity', 1.0)
+
+        # Draw continuous Phase-Locked health bars (cohesion derived from Kuramoto order parameter)
+        p_text = self.font.render(f"YOUR PHASIC INTEGRITY: {p_integ*100:.1f}%", True, (0, 255, 200))
+        surface.blit(p_text, (50, self.HEIGHT - 50))
+        
+        b_text = self.font.render(f"ROGUE INTEGRITY: {b_integ*100:.1f}%", True, (255, 50, 50))
+        surface.blit(b_text, (self.WIDTH - b_text.get_width() - 50, self.HEIGHT - 50))
+        
+        # Pill Matchups and visual Domain shockwave indicators
+        p_ch_val = int(arena.player_domain_charge * 100.0)
+        p_pill_text = self.font.render(f"DOMAIN: {arena.player_pill_name} [Pulse: {p_ch_val}%]", True, (200, 255, 220))
+        surface.blit(p_pill_text, (50, self.HEIGHT - 80))
+        
+        b_ch_val = int(arena.bot_domain_charge * 100.0)
+        b_pill_text = self.font.render(f"DOMAIN: {arena.bot_pill_name} [Pulse: {b_ch_val}%]", True, (255, 200, 200))
+        surface.blit(b_pill_text, (self.WIDTH - b_pill_text.get_width() - 50, self.HEIGHT - 80))
+
+        # Visual indicator of the domain charging aura around the player
+        if hasattr(arena, 'player_domain_charge') and arena.player_domain_charge > 0.05:
+            cx, cy = self.WIDTH // 2, self.HEIGHT // 2
+            aura_radius = int(25.0 * arena.player_domain_charge / self.ZOOM)
+            pygame.draw.circle(surface, (255, 0, 255, 80), (cx, cy), aura_radius + 15, 2)
+
+        # Winner Splash Screen
+        if arena.winner:
+            overlay = pygame.Surface((self.WIDTH, self.HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))
+            surface.blit(overlay, (0, 0))
+            
+            result = "DOMAIN SUPREME - VICTORY!" if arena.winner == "Player" else "DOMAIN SHATTERED - DEFEAT"
+            color = (0, 255, 100) if arena.winner == "Player" else (255, 50, 50)
+            
+            res_text = self.title_font.render(result, True, color)
+            surface.blit(res_text, (self.WIDTH // 2 - res_text.get_width()//2, self.HEIGHT // 2 - 50))
+            
+            info = self.font.render("Transitioning to Next Cycle...", True, (200, 200, 200))
+            surface.blit(info, (self.WIDTH // 2 - info.get_width()//2, self.HEIGHT // 2 + 20))
 
     def draw_debug_window(self, surface, arena):
-        if not arena.cfg.get('show_debug_window', True):
+        # Prevent Labyrinth debug from drawing during combat
+        if hasattr(arena, 'bot_density'): return
+        
+        if not getattr(arena, 'cfg', {}).get('show_debug_window', True):
             return
             
         panel_w, panel_h = 300, 310
@@ -230,7 +375,6 @@ class VortexRenderer:
             surface.blit(text, (panel_x + 12, y_offset))
             y_offset += 16
             
-        # Радар фаз
         cx, cy = panel_x + panel_w // 2, y_offset + 32
         radar_rad = 28
         pygame.draw.circle(surface, (40, 60, 80), (cx, cy), radar_rad, 1)
@@ -250,6 +394,7 @@ class VortexRenderer:
             pygame.draw.circle(surface, (255, 220, 50), (int(cx + loc_x), int(cy + loc_y)), 2)
 
     def draw_alchemy_ui(self, surface, arena):
+        if hasattr(arena, 'bot_density'): return 
         if not hasattr(arena, 'alchemy_entities'): return
         
         theta = -arena.player_angle
@@ -262,12 +407,10 @@ class VortexRenderer:
             sy = self.HEIGHT / 2.0 + (-dx * sin_t + dy * cos_t) / self.ZOOM
             return int(sx), int(sy)
 
-        # Отрисовка Котла
         cx, cy = project(arena.cauldron_pos[0].item(), arena.cauldron_pos[1].item())
         rad_cauldron = int(arena.cell_w * 1.5 / self.ZOOM)
         pygame.draw.circle(surface, (150, 150, 150), (cx, cy), rad_cauldron, 2)
 
-        # Отрисовка Сущностей на основе их векторов из конфигурации
         for ent in arena.alchemy_entities:
             ex, ey = project(ent['pos'][0].item(), ent['pos'][1].item())
             
@@ -291,7 +434,6 @@ class VortexRenderer:
             text = self.font.render(icon, True, (255, 255, 255))
             surface.blit(text, (ex - text.get_width()//2, ey - 22))
 
-        # UI Прогресса Плавки
         if arena.smelting_progress > 0.0 and not arena.pill_created:
             bar_w, bar_h = 300, 24
             bx, by = self.WIDTH // 2 - bar_w // 2, self.HEIGHT - 80
@@ -311,7 +453,10 @@ class VortexRenderer:
             surface.blit(text, (self.WIDTH // 2 - text.get_width()//2, self.HEIGHT - 60))
 
     def draw_ui(self, surface, arena):
-        self.draw_rune_zones(surface, arena)
+        if hasattr(arena, 'bot_density'):
+            self.draw_combat_ui(surface, arena)
+            return
+            
         self.draw_debug_window(surface, arena)
         self.draw_alchemy_ui(surface, arena)
 
