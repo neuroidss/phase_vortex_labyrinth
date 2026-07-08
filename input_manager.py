@@ -1,24 +1,15 @@
 # input_manager.py
 import pygame
-import math
 
 class UnifiedInputManager:
     def __init__(self, width, height):
         self.WIDTH = width
         self.HEIGHT = height
-        # Скрываем курсор и захватываем окно ввода для бесконечного считывания дельты мыши
         pygame.mouse.set_visible(False)
         pygame.event.set_grab(True)
-        # Нейтральное состояние оси сжатия: 0.0 (слайм среднего размера)
         self.compression_axis = 0.0
-        
-        # Постоянная фиксация (latch) калибровки триггеров
-        # Как только один раз увидим сигнал ниже -0.5, флаг защелкнется в True навсегда
-        self.rt_rests_at_minus_one = False
-        self.lt_rests_at_minus_one = False
 
     def toggle_mouse_lock(self):
-        """Освобождает или захватывает мышь в системе (по кнопке ESC)"""
         is_grabbed = pygame.event.get_grab()
         pygame.event.set_grab(not is_grabbed)
         pygame.mouse.set_visible(is_grabbed)
@@ -26,96 +17,70 @@ class UnifiedInputManager:
     def process_inputs(self, joysticks, dt):
         keys = pygame.key.get_pressed()
         mouse_buttons = pygame.mouse.get_pressed()
-        
         is_real_data = False
         
-        # --- 1. КЛАВИАТУРА (Попарное вычитание полуосей кнопок -> биполярные оси -1..1) ---
-        kb_vx = float(keys[pygame.K_RIGHT] or keys[pygame.K_d]) - float(keys[pygame.K_LEFT] or keys[pygame.K_a])
-        kb_vy = float(keys[pygame.K_DOWN] or keys[pygame.K_s]) - float(keys[pygame.K_UP] or keys[pygame.K_w])
-        kb_tq = float(keys[pygame.K_e]) - float(keys[pygame.K_q])
-        
-        # Разность кнопок сжатия: Пробел (+1) сжимает, Левый Shift (-1) расширяет
-        kb_comp = float(keys[pygame.K_SPACE]) - float(keys[pygame.K_LSHIFT])
-        
-        ctrl_vx = kb_vx
-        ctrl_vy = kb_vy
-        ctrl_tq = kb_tq
-        ctrl_comp = kb_comp
+        # ДВИЖЕНИЕ И ПОВОРОТЫ
+        ctrl_vx = float(keys[pygame.K_RIGHT] or keys[pygame.K_d]) - float(keys[pygame.K_LEFT] or keys[pygame.K_a])
+        ctrl_vy = float(keys[pygame.K_DOWN] or keys[pygame.K_s]) - float(keys[pygame.K_UP] or keys[pygame.K_w])
+        ctrl_tq = float(keys[pygame.K_e]) - float(keys[pygame.K_q])
+        ctrl_comp = float(keys[pygame.K_SPACE]) - float(keys[pygame.K_LSHIFT])
 
-        # --- 2. МЫШЬ (Разность кликов -> биполярная ось сжатия + дельта поворота) ---
-        # ЛКМ (+1) сжимает, ПКМ (-1) расширяет слайм
-        mouse_comp = float(mouse_buttons[0]) - float(mouse_buttons[2])
-        ctrl_comp += mouse_comp
-        
-        # Считываем непрерывную ось вращения через дельту мыши (огеймпадивание)
+        # АЛХИМИЧЕСКИЕ ОСИ ЭМУЛЯЦИИ COHERENCE
+        # 1. Спектральная ось: Z (-1, Theta) vs C (+1, Gamma)
+        ctrl_alch_freq = float(keys[pygame.K_c]) - float(keys[pygame.K_z])
+        # 2. Пространственная ось: X (-1, Shield) vs V (+1, Core)
+        ctrl_alch_spatial = float(keys[pygame.K_v]) - float(keys[pygame.K_x])
+
+        # МЫШЬ
+        ctrl_comp += float(mouse_buttons[0]) - float(mouse_buttons[2])
         if pygame.event.get_grab():
-            mouse_dx, mouse_dy = pygame.mouse.get_rel()
-            # Знак инвертирован для корректного неевклидова вращения
-            mouse_tq = -mouse_dx * 0.05
-            mouse_tq = max(-1.0, min(1.0, mouse_tq))
-            ctrl_tq += mouse_tq
+            mouse_dx, _ = pygame.mouse.get_rel()
+            ctrl_tq += max(-1.0, min(1.0, -mouse_dx * 0.05))
 
-        # --- 3. ГЕЙМПАД (Считывание и перевод в чистые оси -1..1 с автокалибровкой триггеров) ---
+        # ГЕЙМПАД
         if len(joysticks) > 0:
             joystick = joysticks[0]
             num_axes = joystick.get_numaxes()
+            num_buttons = joystick.get_numbuttons()
             
-            # Левый стик (Движение)
             if num_axes >= 2:
-                ctrl_vx += joystick.get_axis(0)
-                ctrl_vy += joystick.get_axis(1)
+                jx = joystick.get_axis(0)
+                jy = joystick.get_axis(1)
+                ctrl_vx += jx if abs(jx) > 0.15 else 0.0
+                ctrl_vy += jy if abs(jy) > 0.15 else 0.0
             
-            # Предварительно считываем физические значения триггеров для калибровки
-            axis_2_val = joystick.get_axis(2) if num_axes >= 3 else 0.0
-            axis_5_val = joystick.get_axis(5) if num_axes >= 6 else 0.0
-            
-            # КАЛИБРОВКА (LATCH): Если курок в покое выдал отрицательное значение — фиксируем его полярность
-            if axis_5_val < -0.5:
-                self.rt_rests_at_minus_one = True
-            if axis_2_val < -0.5:
-                self.lt_rests_at_minus_one = True
-
-            # Правый стик (Поворот)
             if num_axes >= 4:
-                axis_3_val = joystick.get_axis(3)
-                
-                # Если мы жестко зафиксировали, что ось 2 — это левый курок L2,
-                # то правый стик X — это строго ось 3. Никаких динамических сбросов при нажатии!
-                if self.lt_rests_at_minus_one:
-                    jtq = axis_3_val
-                else:
-                    jtq = axis_2_val
-                ctrl_tq -= jtq
+                jtq = joystick.get_axis(3)
+                ctrl_tq -= jtq if abs(jtq) > 0.15 else 0.0
             
-            # Разность триггеров: R2 (+1) сжимает, L2 (-1) расширяет слайм
             if num_axes >= 6:
-                r2_normalized = (axis_5_val + 1.0) / 2.0 if self.rt_rests_at_minus_one else axis_5_val
-                l2_normalized = (axis_2_val + 1.0) / 2.0 if self.lt_rests_at_minus_one else 0.0
-                
-                gp_comp = r2_normalized - l2_normalized
-                ctrl_comp += gp_comp
+                r2 = (joystick.get_axis(5) + 1.0) / 2.0
+                l2 = (joystick.get_axis(2) + 1.0) / 2.0
+                ctrl_comp += (r2 - l2)
 
-        # Нормализуем результирующие оси в диапазон [-1.0, 1.0]
+            # Эмуляция частоты на кнопках геймпада (кнопки X/B и Y/A)
+            if num_buttons >= 4:
+                # Спектральная ось на кнопках: B (кнопка 1, +1) и X (кнопка 2, -1)
+                ctrl_alch_freq += float(joystick.get_button(1)) - float(joystick.get_button(2))
+                # Пространственная ось на кнопках: Y (кнопка 3, +1) и A (кнопка 0, -1)
+                ctrl_alch_spatial += float(joystick.get_button(3)) - float(joystick.get_button(0))
+
         eeg_vx = max(-1.0, min(1.0, ctrl_vx))
         eeg_vy = max(-1.0, min(1.0, ctrl_vy))
         eeg_tq = max(-1.0, min(1.0, ctrl_tq))
         
-        # Интегрируем дельту сжатия/разжатия во времени
+        # Сглаживание осей алхимии геймпада
+        alch_freq = max(-1.0, min(1.0, ctrl_alch_freq))
+        alch_spatial = max(-1.0, min(1.0, ctrl_alch_spatial))
+        
         if abs(ctrl_comp) > 0.05:
-            self.compression_axis = max(-1.0, min(1.0, self.compression_axis + ctrl_comp * dt * 3.5))
+            self.compression_axis = max(-1.0, min(1.0, self.compression_axis + ctrl_comp * dt * 4.0))
         else:
-            # Плавный физический возврат к нейтральному состоянию (0.0) при отсутствии инпута
-            if self.compression_axis > 0.05:
-                self.compression_axis = max(0.0, self.compression_axis - dt * 2.5)
-            elif self.compression_axis < -0.05:
-                self.compression_axis = min(0.0, self.compression_axis + dt * 2.5)
-            else:
-                self.compression_axis = 0.0
+            if self.compression_axis > 0.05: self.compression_axis = max(0.0, self.compression_axis - dt * 3.0)
+            elif self.compression_axis < -0.05: self.compression_axis = min(0.0, self.compression_axis + dt * 3.0)
+            else: self.compression_axis = 0.0
 
-        # Возвращаем чистую биполярную ось [-1.0, 1.0] для физического движка
-        ui_compression = self.compression_axis
-
-        if abs(eeg_vx) > 0.05 or abs(eeg_vy) > 0.05 or abs(eeg_tq) > 0.05 or abs(ctrl_comp) > 0.05:
+        if abs(eeg_vx) > 0.05 or abs(eeg_vy) > 0.05 or abs(eeg_tq) > 0.05 or abs(ctrl_comp) > 0.05 or abs(alch_freq) > 0.05 or abs(alch_spatial) > 0.05:
             is_real_data = True
 
-        return is_real_data, eeg_vx, eeg_vy, eeg_tq, ui_compression
+        return is_real_data, eeg_vx, eeg_vy, eeg_tq, self.compression_axis, alch_freq, alch_spatial

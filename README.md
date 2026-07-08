@@ -1,81 +1,83 @@
-# 🌌 Sovereign Phase Vortex Labyrinth: Hydrodynamic BCI Esports Engine
+# 🌌 QUANTUM ALCHEMY REACTOR: The Neuro-Esports Phase Engine
 
-An experimental, non-classical Brain-Computer Interface (BCI) esports engine built on the direct coupling of a 16-channel EEG array (**FreeEEG16** / LSL streams) with a continuous 2D Navier-Stokes fluid-particle simulation.
+**Quantum Alchemy Reactor (QAR)** is an experimental Brain-Computer Interface (BCI) esports framework. It directly couples a 16-channel EEG micro-array (*FreeEEG16-alpha2*) with a continuous 2D quantum hydrodynamic simulation (Navier-Stokes) evaluated on the GPU.
 
-The engine completely discards traditional discrete button-based inputs, transitioning control entirely into **direct spatial perturbations of a continuous physical medium**. The controlled avatar (the "neuro-slime") and the surrounding labyrinth coexist within a seamless, non-Euclidean toroidal continuum.
+This project discards traditional game-state abstractions. It operates on the **Mathematical Universe Hypothesis** and Roger Penrose's "Three Worlds" concept: the idea that the Mental World (consciousness/EEG) can interface directly with the Platonic World (pure mathematics/Navier-Stokes), forcing tangible changes in the Physical/Simulated World. 
 
-[gameplay](https://drive.google.com/file/d/1x8jnGOfOT4AdYe6K6T-0jPwscZurOfV7/view?usp=sharing)
-
----
-
-## 🧬 Core Architecture & The 120-Jet Engine
-
-Unlike traditional BCI applications that reduce complex brain waves to a few simple commands (e.g., "Left", "Right", "Push"), this engine projects the entire topology of the brain's phase-synchronization into the physical world.
-
-### 1. The 120-Jet Continuum (Maximum BCI Fidelity)
-By default, the engine operates in the `120_jets` mode. Instead of just projecting the 16 physical electrodes as individual thrusters, the engine calculates the Phase Locking Value (ciPLV) for **every unique pair of electrodes** ($\frac{16 \times 15}{2} = 120$ connections).
-*   Each of these 120 dynamic connections becomes an independent hydrodynamic nozzle (a jet) in the fluid solver, positioned exactly between the corresponding physical nodes of the slime.
-*   The raw mental intention is injected directly into the Navier-Stokes grid as 120 independent vortices.
-*   The slime does not have artificial "kinematic" speed applied to it. It moves **strictly because the 120 jets push the surrounding fluid, and the fluid carries the soft-body nodes**. 
-
-### 2. The Slime Adhesion Continuum (Compression Axis)
-The game does not use discrete "modes" or button toggles. Instead, it utilizes a continuous compression axis `[-1.0 ... 0.0 ... +1.0]` (mapped to analog triggers L2/R2, or the mouse/keyboard delta). This axis controls the micro-physics of the soft-body and its interaction with the environment:
-
-*   **Expanded State (-1.0):** The Position-Based Dynamics (PBD) springs relax. The slime spreads out, becoming a flexible gel. Its 120 jets cover a wider area. In this state, the slime becomes "sticky" — it can seamlessly wrap around corners and crawl along walls without bouncing off, allowing for high-friction, tactical wall-crawling.
-*   **Neutral State (0.0):** Balanced fluid movement. The internal springs hold the geometric shape of the FreeEEG16 array, but allow for organic deformation when squeezing through the labyrinth.
-*   **Monolithic Compressed State (+1.0):** The 16 nodes tightly pack into a razor-sharp, unbreakable formation. The 120 jets align almost perfectly, merging their hydrodynamic forces into a single, high-velocity thruster. The slime's outer shell becomes highly repellent, allowing it to ricochet off walls and instantly break free from sticky corners.
-
-### 3. Hybrid Predictive Camera & Ego-Centric Steering
-To solve the "Catch-22" of soft-body rotation (where the camera waits for the slime to rotate, but the slime is anchored to the camera's template), the engine uses a **Predictive Kinematic Camera**:
-*   **`coherence_relative_to_physical = True`**: The BCI thrust is always applied relative to the physical rotation of the slime itself. If you rotate the slime slightly in a hallway, "forward" immediately shifts to match the new nose-angle (tank-like steering).
-*   The camera reads the user's rotational intent (`eeg_tq`) and proactively rotates the virtual ideal template. The PBD springs then physically *drag* the fluid nodes into the turn with immense torque, providing zero-latency, perfectly crisp steering even during heavy fluid deformation.
-
-### 4. Pure Fluid Boundary Gliding
-Traditional fluid engines suffer from the "dead water" problem (velocity is zero exactly at the wall boundary, trapping the player). We solved this by implementing a dynamic repulsive magnetic layer (`inner_wall_repulsion_scale`). It keeps the active jet nozzles exactly one millimeter away from the dead zone, ensuring that the 120 jets always inject force into "living" fluid, allowing smooth gliding along walls.
+We map the metaphysics of Chinese Cultivation (Xianxia / Donghua) directly onto nonlinear dynamics. Magic here is not fantasy; it is physics. Cultivation is the deliberate control of neuroplasticity and phase coherence.
 
 ---
 
-## 🏆 Esports Integrity & Tournament Standards
+## 🔬 SCIENTIFIC FOUNDATION & DOIs
 
-The engine is engineered specifically to meet the strict competitive standards required for international, professional tournament play:
+The engine mechanics are strictly derived from peer-reviewed computational neuroscience and complex systems theory:
 
-### 1. Absolute Determinism (0% RNG)
-The simulation loop is 100% deterministic. There are no random numbers used during gameplay. The trajectory of the slime, fluid shear patterns, and wall interactions are direct mathematical results of the athlete's phase-locking consistency and the laws of fluid dynamics. 
-
-### 2. Artifact Immunity via Vectorized ciPLV
-Because raw EEG signals can contain muscle artifacts (clenched jaw, blinking) that could be abused to generate inputs, the engine enforces strict biological verification. 
-*   The parallel GPU spectrometer computes the **Corrected Imaginary Phase Locking Value (ciPLV)** for all 120 pairs in real-time.
-*   This metric is mathematically immune to zero-lag synchronization, completely discarding physical currents spreading across the scalp (volume conduction/EMG leakage). Only genuine, non-zero-lag cortical phase couplings generate thrust in the fluid.
-
----
-
-## 🎮 Gamepad & Neurogamepad Universal Input
-
-For players training without an EEG headset, or for system calibration, the `input_manager.py` module translates manual inputs into the same bipolar difference space:
-*   **Neurogamepad Mode:** Calculates a unified vector from the neuro-data or physical gamepad (WASD / Left Stick) and applies it to the fluid as a monolithic block, simulating the thrust of the `+1.0` compressed state without requiring full 120-jet EEG control.
-*   **Mouselock & Triggers:** Entering ESCAPE locks the mouse cursor, enabling virtual relative mode. The horizontal mouse delta maps to continuous turning. Left Click / Space / R2 compresses the slime (+1.0), and Right Click / LShift / L2 expands it (-1.0).
+1. **Phase Locking Value (ciPLV)**: The EEG spatial mapping uses the corrected imaginary Phase Locking Value to eliminate zero-lag volume conduction artifacts, isolating true neocortical synchronization. 
+   > *Bruña, R., Maestú, F., & Pereda, E. (2018). Phase locking value revisited: teaching new tricks to an old dog. Journal of Neural Engineering.* **[DOI: 10.1088/1741-2552/aacfe4]**
+2. **Working Memory 2.0 (Phase Control)**: The smelting phases (Theta/Shield vs. Gamma/Core) are based on the push-pull dynamics of superficial (Gamma) and deep (Alpha/Beta/Theta) cortical layers during volitional control.
+   > *Miller, E. K., Lundqvist, M., & Bastos, A. M. (2018). Working Memory 2.0. Neuron.* **[DOI: 10.1016/j.neuron.2018.09.023]**
+3. **The Edge of Chaos ($\delta \approx 4.669$)**: The creation of a "Divine Core" (a low-entropy soliton) is governed by Feigenbaum's constant. Structure emerges only when the system is pushed to the edge of bifurcation, forcing the export of entropy (hydrodynamic turbulence) into the surrounding environment.
+   > *Feigenbaum, M. J. (1978). Quantitative universality for a class of nonlinear transformations. Journal of Statistical Physics.* **[DOI: 10.1007/BF01020332]**
 
 ---
 
-## 🛠 Controls & Diagnostics
+## 📜 LORE AS PHYSICS: The Hermeneutics of Wave Mechanics
 
-*   **L:** Toggle fluid velocity and tension vectors (hydrodynamic diagnostic mode).
-*   **K:** Toggle 16-channel electrode sensors, 120-jet coherence bridges, and HUD markers.
-*   **Escape:** Toggle mouse grab/release (Mouselock).
-*   **LClick / Space / R2:** Compress slime (Monolithic state, high speed, high wall bounce).
-*   **RClick / LShift / L2:** Decompress slime (Gel state, sticky wall-crawling).
+The world has suffered a *Decoherence Event*. The semantic fabric of reality has shattered into isolated, high-entropy noise (Hundun). The player acts as a Resonator (Cultivator), using their brainwaves to re-bind these fragments into stable, functional structures—**Exocortex Pills**.
+
+| Xianxia (Donghua) Concept | Mathematical Implementation in QAR |
+| :--- | :--- |
+| **Qi / Intent (Yi)** | Complex phase gradient $\nabla\phi$. Directing fluid flow via wave displacement. |
+| **Elements (Fire, Water)** | Carrier wave bases in $\mathbb{C}^3$ space. Complex vector projections (`[1.0, 0.0, 0.0]`). |
+| **Inner Demon (Xin Mo)** | High-frequency phase noise in the raw EEG signal, causing constructive interference to fail. |
+| **Golden Core (Jindan)** | **Hydrodynamic Soliton**. A standing, self-sustaining wave born at the Edge of Chaos. |
+| **Heavenly Tribulation** | Hydrodynamic backpressure. Exporting entropy from the pill causes violent environmental turbulence that threatens to tear the player apart. |
+| **Aura / Domain** | The radial wave emission of a forged Pill, which dampens or destructively interferes with rogue frequencies. |
 
 ---
 
-## 📚 References & Scientific Grounding
+## 🔄 THE CORE LOOP: Neuro-Action Roguelite
 
-1.  **Bruña, R., Maestú, F., & Pereda, E. (2018).** *Phase locking value revisited: teaching new tricks to an old dog.* Journal of Neural Engineering, 15(5), 056011.  
-    **DOI:** [10.1088/1741-2552/aacfe4](https://doi.org/10.1088/1741-2552/aacfe4)
-2.  **Miller, E. K., Lundqvist, M., & Bastos, A. M. (2018).** *Working Memory 2.0.* Neuron, 100(2), 463-475.  
-    **DOI:** [10.1016/j.neuron.2018.09.023](https://doi.org/10.1016/j.neuron.2018.09.023)
-3.  **Hawkins, J., Leadholm, N., & Clay, V. (2025).** *Hierarchy or Heterarchy? A Theory of Long-Range Connections for the Sensorimotor Brain.* arXiv preprint arXiv:2507.05888.  
-    **arXiv Link:** [arXiv:2507.05888](https://arxiv.org/abs/2507.05888)
+The gameplay consists of three distinct phases that transition seamlessly:
 
+### 1. The Labyrinth (Strategic Gacha & Resource Gathering)
+The labyrinth acts as a random initial state generator. It spawns scattered semantic resonators (Cognits). Because the drop is stochastic, players cannot rely on hardcoded "meta-builds." If a player lacks a Gamma (Fire) cognit, they must either pivot to synthesizing a Theta (Yin) pill or artificially compensate for the missing energy by over-stressing their own neural coherence.
 
-*Engineered for high-fidelity cortical dynamics mapping and competitive BCI sports. AGPL v3 licensed.*
-```
+### 2. The Cauldron (Thermodynamic Smelting)
+There are no scripted recipes. The type of pill forged is determined by the **cosine similarity** between the final complex state of the fluid and the semantic database.
+* **The Bifurcation Pump**: A perfect pill (*Divine Core*) cannot be made passively. The player must hold the system exactly on the Edge of Chaos. The system then rapidly exports entropy (noise) outward, generating massive turbulence in the environment while crystallizing the core.
+
+### 3. The Arena (Domain Clash)
+*Currently in architecture design phase.*
+Upon successful synthesis, the Pill is integrated into the player's Slime, turning it into a Domain generator. Combat is not about depleting HP bars; it is about **Structural Cohesion**. Enemies project phase waves; if an enemy's phase destructively interferes with yours, your Slime's nodes physically rip apart. The quality of the pill synthesized in the Cauldron dictates the stability and penetration power of your Domain.
+
+---
+
+## 🎮 BCI vs. GAMEPAD: The Esports Balance
+
+QAR supports both direct neural input via *FreeEEG16* and standard Gamepad emulation. 
+
+* **Gamepad (Slew-Rate Limited)**: Players control phases via button combinations and temperature via stick torque. The skill floor is accessible, but human finger reaction time caps at ~150ms. 
+* **EEG (The Advantage of Organic Chaos)**: Brain states shift in 20-40ms. Furthermore, a human brain in a "flow state" generates organic fractal noise that a deterministic bot or gamepad player cannot predict. A trained BCI-athlete can generate *Adaptive Resonance*, overpowering gamepad players through sheer biological anti-fragility.
+
+---
+
+## 🔊 SENSORY IMMERSION: Zero-Latency Sonification
+
+QAR uses 100% procedural sonification with ~11ms latency. There are no pre-recorded sound effects.
+* Local amplitudes and phases of the complex channels (RGB) drive binaural carrier tones (Theta, SMR, Gamma).
+* Fluid velocity vector fields $(u, v)$ modulate spatial pink noise (fluid shear).
+* Wall proximity triggers sonar-like high-frequency feedback.
+Players can close their eyes and smelt a Divine Core relying entirely on auditory phase-matching (binaural beats).
+
+---
+
+## 🚀 ROADMAP
+
+1. **Arena Combat Module (`vortex_combat.py`)**: 1v1 isolated phase duels against Rogue Cultivators (Bots) evaluating structural cohesion.
+2. **Spectral Pattern Packing (Harmonics)**: Utilizing the $C^3$ channels not as flat colors, but as a Fundamental Frequency ($f$) and its Harmonics ($2f, 3f$). Achieving the Edge of Chaos will spawn visible Moiré fractals ("Heavenly Runes") on the pill, mathematically proving low entropy.
+3. **LLM Generative Alchemy**: Passing the final $\mathbb{C}^3$ vector to an LLM to dynamically generate the Pill's name, lore, and domain properties based on its distance from standard semantic attractors.
+
+---
+*Engineered for cognitive connectome mapping and competitive BCI Esports. AGPL v3 licensed.*
+
