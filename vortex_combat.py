@@ -31,7 +31,10 @@ class PhaseVortexCombat:
         # Determine elemental archetype
         self.is_player_yang = self.player_vector[0] > self.player_vector[2]
         self.is_player_yin = self.player_vector[2] > self.player_vector[0] and self.player_vector[2] > self.player_vector[1]
+        
+        # Mastery Check: Skipped/Impure slag pills offer no passive stabilization
         self.is_player_slag = (self.player_quality < 40.0)
+        self.is_pure_mastery = (self.player_pill_name == "Void Core" or self.player_quality >= 100.0)
         
         # Kuramoto Coupled Oscillator States [16 internal phases in radians]
         self.player_node_phases = torch.zeros(16, dtype=torch.float32, device=device)
@@ -42,6 +45,7 @@ class PhaseVortexCombat:
         if self.is_player_slag:
             self.player_K = 0.5 
             
+        self.player_K_active = self.player_K
         self.player_integrity = 1.0 # Kuramoto Order Parameter [0.0 ... 1.0]
         self.bot_integrity = 1.0
         
@@ -51,6 +55,15 @@ class PhaseVortexCombat:
         self.energy_absorbed = 0.0
         self.last_snap_event = False
         self.last_heal_event = False
+        
+        # Gamepad assist states
+        self.assist_mode_active = False
+        self.assist_profile = "None"
+        
+        # FreeEEG16 focused beam telemetry
+        self.player_beam_active = False
+        self.player_beam_intensity = 0.0
+        self.pill_stabilization_factor = 1.0
         
         # Raw Gamepad diagnostics buffer
         self.raw_axes = []
@@ -131,7 +144,7 @@ class PhaseVortexCombat:
         dy = torch.remainder(self.y_indices - py_g + self.res/2, self.res) - self.res/2
         mask = torch.exp(-(dx**2 + dy**2) / (12.0**2))
         
-        rate = 45.0 * dt
+        rate = 85.0 * dt  # Highly active wave injection
         phase_ang = (self.combat_time * 14.0) % (2 * math.pi) 
         phase_cos = math.cos(phase_ang)
         phase_sin = math.sin(phase_ang)
@@ -156,14 +169,16 @@ class PhaseVortexCombat:
         
         for c in range(3):
             if vector[c] > 0.01:
-                self.density_complex[0, c*2]   += mask * 120.0 * vector[c]
+                # Deposit huge non-linear phase spikes to desynchronize the opponent
+                self.density_complex[0, c*2]   += mask * 12.5 * scale * vector[c]
+                self.density_complex[0, c*2+1] += mask * 12.5 * scale * vector[c]
                 
         force_dir = 1.0 if is_yang else -1.0
-        self.u[0, 0] += (dx / dist) * mask * 1100.0 * scale * force_dir
-        self.v[0, 0] += (dy / dist) * mask * 1100.0 * scale * force_dir
+        self.u[0, 0] += (dx / dist) * mask * 1200.0 * scale * force_dir
+        self.v[0, 0] += (dy / dist) * mask * 1200.0 * scale * force_dir
 
     def _apply_120_jet_eeg_physics(self, eeg_c0_spectrum, pin_pos, dt):
-        """ Translates BCI signals into continuous micro-turbulent protection jets """
+        """ Translates raw continuous BCI matrices into 120 fluid protection micro-jets """
         if eeg_c0_spectrum is None:
             return
             
@@ -175,8 +190,8 @@ class PhaseVortexCombat:
         dx_ideal = self.pin_x[self.pair_i] - self.pin_x[self.pair_j]
         dy_ideal = self.pin_y[self.pair_i] - self.pin_y[self.pair_j]
         
-        jet_force_x = c0_120 * dx_ideal * 30.0
-        jet_force_y = c0_120 * dy_ideal * 30.0
+        jet_force_x = c0_120 * dx_ideal * 35.0
+        jet_force_y = c0_120 * dy_ideal * 35.0
         
         pin_gx_120 = torch.remainder((mid_x / self.WIDTH) * self.res, self.res)
         pin_gy_120 = torch.remainder((mid_y / self.HEIGHT) * self.res, self.res)
@@ -245,11 +260,100 @@ class PhaseVortexCombat:
             self.u[0, 0] *= (1.0 - bot_dominates * 0.35 * dt)
             self.v[0, 0] *= (1.0 - bot_dominates * 0.35 * dt)
 
+    def _evaluate_cognitive_esports_loop(self, eeg_c0_spectrum, is_real_data, dt):
+        """
+        Differentiates Gamepad operators from FreeEEG16 operators.
+        - Gamepad players trigger Gamepad Neuro-Assist (buttons create discrete synthetic coherence patterns).
+        - FreeEEG16 players enjoy full 120-jet multi-frequency continuous freedom.
+        - The equipped Pill acts as a cognitive lens stabilizer (Prism), damping desynchronization noise.
+        """
+        # --- GAMEPAD NEURO-ASSIST GENERATION ---
+        if not is_real_data or eeg_c0_spectrum is None:
+            self.assist_mode_active = True
+            synthetic_matrix = torch.zeros((16, 16, 1), device=self.device)
+            
+            # Map discrete spatial buttons to assist structures
+            if self.player_spatial_val < -0.3:
+                # Assist Option A: Receptive Shield. High outer-ring coherence.
+                self.assist_profile = "Shield Assist"
+                outer_idx = [0, 1, 3, 4, 6, 7, 8, 9, 11, 12, 14, 15]
+                for o_i in outer_idx:
+                    for o_j in outer_idx:
+                        synthetic_matrix[o_i, o_j, 0] = 0.82
+            elif self.player_spatial_val > 0.3:
+                # Assist Option B: Focused Core. High inner-ring coherence.
+                self.assist_profile = "Core Assist"
+                inner_idx = [2, 5, 10, 13]
+                for i_i in inner_idx:
+                    for i_j in inner_idx:
+                        synthetic_matrix[i_i, i_j, 0] = 0.88
+            else:
+                # Default baseline SMR catalytic mesh
+                self.assist_profile = "Mesh Assist"
+                for i in range(16):
+                    idx_n = (i + 1) % 16
+                    synthetic_matrix[i, idx_n, 0] = 0.45
+                    synthetic_matrix[idx_n, i, 0] = 0.45
+            
+            eeg_c0_spectrum = synthetic_matrix
+            self.player_K_active = self.player_K
+            self.player_beam_active = False
+            self.player_beam_intensity = 0.0
+            self.pill_stabilization_factor = 0.50 # Moderate assist damping penalty
+            return eeg_c0_spectrum
+
+        # --- FreeEEG16 COGNITIVE LENS STABILIZER (THE Jindan PRISM) ---
+        self.assist_mode_active = False
+        self.assist_profile = "FreeEEG16 Native"
+        
+        num_bins = eeg_c0_spectrum.shape[2]
+        
+        # Real-time multi-frequency decomposition across the 26mm high-density cluster
+        # Theta (Yin-Water / Bins 2 to 5)
+        # SMR (Qi-Catalyst / Bins 6 to 9)
+        # Gamma (Yang-Fire / Bins 15 to 50)
+        theta_coh = torch.mean(eeg_c0_spectrum[:, :, 2:5], dim=2)
+        smr_coh   = torch.mean(eeg_c0_spectrum[:, :, 6:10], dim=2)
+        gamma_coh = torch.mean(eeg_c0_spectrum[:, :, 15:51], dim=2)
+        
+        t_amp = torch.mean(torch.abs(theta_coh)).item()
+        s_amp = torch.mean(torch.abs(smr_coh)).item()
+        g_amp = torch.mean(torch.abs(gamma_coh)).item()
+        
+        # Map actual real-time mental states into standard vector coordinates
+        real_time_vector = torch.tensor([g_amp, s_amp, t_amp], dtype=torch.float32, device=self.device)
+        norm_real = torch.norm(real_time_vector) + 1e-8
+        real_time_vector = real_time_vector / norm_real
+        
+        # Compare actual state to the Pill Core's configured blueprint (Cosine Similarity)
+        lens_focus_similarity = torch.sum(real_time_vector * self.player_vector).item()
+        lens_focus_similarity = max(0.01, min(1.0, lens_focus_similarity))
+        
+        # The Pill filters mental drift: high focus boosts Kuramoto locking factor
+        self.player_K_active = self.player_K + (lens_focus_similarity * 48.0)
+        self.pill_stabilization_factor = lens_focus_similarity
+        
+        # Mastery Output: high focus charges and locks the focus beam on target
+        if lens_focus_similarity > 0.65 and g_amp > 0.04:
+            beam_multiplier = 2.0 if self.is_pure_mastery else 1.0
+            self.player_beam_active = True
+            self.player_beam_intensity = (lens_focus_similarity - 0.65) * 18.0 * beam_multiplier
+            
+            # Focused beam desynchronizes opponent oscillators and drains their shields
+            self.bot_domain_charge = max(0.0, self.bot_domain_charge - dt * self.player_beam_intensity * 1.5)
+            scramble_drift = (torch.rand(16, device=self.device) * 2.0 - 1.0) * self.player_beam_intensity * 25.0
+            self.bot_node_phases += scramble_drift * dt
+        else:
+            self.player_beam_active = False
+            self.player_beam_intensity = 0.0
+            
+        return eeg_c0_spectrum
+
     def _evaluate_kuramoto_neural_decoherence(self, pin_pos, identity_vector, is_player, dt):
         """ 
         Models connectome health using a Kuramoto Coupled Oscillator Network.
         Hostile phase density scrambles internal node synchronization.
-        If player matches protective configurations, they absorb chaos to heal broken springs.
+        Shattered spring counts trigger cascading phase-noise bleeding.
         """
         px_norm = torch.clamp((pin_pos[:, 0] / self.WIDTH) * 2.0 - 1.0, -1.0, 1.0)
         py_norm = torch.clamp((pin_pos[:, 1] / self.HEIGHT) * 2.0 - 1.0, -1.0, 1.0)
@@ -271,13 +375,22 @@ class PhaseVortexCombat:
         # High dissonance indicates exposure to a hostile phase domain
         dissonance = torch.clamp(0.5 - similarity, 0.0, 1.0)
         
-        # Disruption jitter is generated directly by hostile phase density magnitude
-        disruption_force = dissonance * local_m * 450.0
+        # Direct proximity clashing: physical boundary friction scrambles nodes directly
+        dist_slimes = torch.norm(self.player_pos - self.bot_pos).item()
+        clash_factor = max(0.0, (220.0 - dist_slimes) / 220.0) # Active within 220px radius
+        proximity_damage = clash_factor * 42.0
         
-        # Slag receives extreme, unshielded stress
+        # Disruption force generated by local domain dissonance and boundary friction
+        disruption_force = (dissonance * local_m * 680.0) + proximity_damage
+        
+        # Pill alignment stabilizer damping
+        stab_factor = self.pill_stabilization_factor if is_player else 0.8
+        if is_player and self.is_pure_mastery:
+            stab_factor = 0.05 # Pure mastery mode: zero passive lens shielding
+            
         quality = self.player_quality if is_player else self.bot_quality
-        quality_mod = 1.0 if not (is_player and self.is_player_slag) else 0.1
-        jitter_force = disruption_force * (100.0 / (quality * quality_mod + 1e-5)) * 0.5
+        quality_mod = 1.0 if not (is_player and self.is_player_slag) else 0.05
+        jitter_force = (disruption_force * (100.0 / (quality * quality_mod + 1e-5)) * 0.75) * (1.0 - stab_factor * 0.70)
         
         # Save metrics for GUI spectroscopy
         if is_player:
@@ -298,7 +411,7 @@ class PhaseVortexCombat:
                 is_absorbing = True
                 
         if is_absorbing:
-            self.energy_absorbed += float(torch.mean(jitter_force).item()) * 0.05
+            self.energy_absorbed += float(torch.mean(jitter_force).item()) * 0.12 * (self.pill_stabilization_factor + 0.1)
             if self.energy_absorbed >= 12.0:
                 if (~edge_intact).any():
                     broken_nodes = torch.nonzero(~edge_intact).squeeze(1)
@@ -316,11 +429,12 @@ class PhaseVortexCombat:
         # 2. Kuramoto internal coupling step
         idx_next = torch.remainder(torch.arange(16, device=self.device) + 1, 16)
         phase_diffs = phases[idx_next] - phases
-        K = self.player_K if is_player else self.bot_K
+        K = self.player_K_active if is_player else self.bot_K
         phases += K * torch.sin(phase_diffs) * dt
         
-        # 3. Dynamic phase scrambling (Xin Mo phase drift)
-        scramble_rate = dissonance * local_m * 18.0
+        # 3. Dynamic phase scrambling (Xin Mo phase drift and high-entropy leak penalties)
+        num_broken = (~edge_intact).sum().item()
+        scramble_rate = (dissonance * local_m * 45.0) + (num_broken * 9.5)
         phase_noise = (torch.rand(16, device=self.device) * 2.0 - 1.0) * scramble_rate
         phases += phase_noise * dt
         
@@ -335,7 +449,7 @@ class PhaseVortexCombat:
         cos_sum = torch.cos(phases_clamped).mean()
         sin_sum = torch.sin(phases_clamped).mean()
         integrity = torch.sqrt(cos_sum**2 + sin_sum**2).item()
-        integrity = max(0.1, min(1.0, integrity))
+        integrity = max(0.01, min(1.0, integrity))
         
         if is_player:
             self.player_integrity = integrity
@@ -394,7 +508,7 @@ class PhaseVortexCombat:
         if is_player and self.is_player_slag:
             quality_factor = 5.0 # Slag springs have zero yield strength
             
-        elongation_limit = (20.0 + quality_factor * 0.25) * max(0.2, integrity_mult)
+        elongation_limit = (20.0 + quality_factor * 0.25) * max(0.15, integrity_mult)
         has_snapped = (d_curr > elongation_limit) & edge_intact
         edge_intact[has_snapped] = False
         
@@ -426,7 +540,7 @@ class PhaseVortexCombat:
             for idx in broken_idx:
                 gx_b, gy_b = int((pin_pos[idx, 0]/self.WIDTH)*self.res), int((pin_pos[idx, 1]/self.HEIGHT)*self.res)
                 if 0 < gx_b < self.res and 0 < gy_b < self.res:
-                    self.density_complex[0, 0:6, gy_b-1:gy_b+2, gx_b-1:gx_b+2] += (random.random() * 2.0 - 1.0) * 20.0 * dt
+                    self.density_complex[0, 0:6, gy_b-1:gy_b+2, gx_b-1:gx_b+2] += (random.random() * 2.0 - 1.0) * 45.0 * dt
         
         dummy_captured = torch.zeros(16, dtype=torch.bool, device=self.device)
         pin_pos = apply_cohesion_constraint(pin_pos, ideal_pos, dummy_captured, ideal_scale, cohesion_level=0.8)
@@ -456,9 +570,9 @@ class PhaseVortexCombat:
                     bot_move_x = -(bot_dir[0] / bot_dist) * 500.0 * dt
                     bot_move_y = -(bot_dir[1] / bot_dist) * 500.0 * dt
                     
-            self.bot_domain_charge += dt * 0.7
-            if self.bot_domain_charge > 1.0 and bot_dist < 300.0:
-                self._inject_domain_explosion(self.bot_pos, self.bot_vector, 1.4, self.is_bot_yang)
+            self.bot_domain_charge += dt * 0.75
+            if self.bot_domain_charge > 1.0 and bot_dist < 320.0:
+                self._inject_domain_explosion(self.bot_pos, self.bot_vector, 1.5, self.is_bot_yang)
                 self.bot_domain_charge = 0.0
                 
         else:
@@ -469,9 +583,9 @@ class PhaseVortexCombat:
             bot_move_x = (bot_dir[0] / bot_dist + math.sin(self.combat_time * 5.0)) * 800.0 * dt
             bot_move_y = (bot_dir[1] / bot_dist + math.cos(self.combat_time * 7.0)) * 800.0 * dt
             
-            self.bot_domain_charge += dt * 1.2
+            self.bot_domain_charge += dt * 1.3
             if self.bot_domain_charge > 1.0:
-                self._inject_domain_explosion(self.bot_pos, self.bot_vector, 2.0, self.is_bot_yang)
+                self._inject_domain_explosion(self.bot_pos, self.bot_vector, 2.1, self.is_bot_yang)
                 self.bot_domain_charge = 0.0
 
         bx_g, by_g = int((self.bot_pos[0]/self.WIDTH)*self.res), int((self.bot_pos[1]/self.HEIGHT)*self.res)
@@ -488,7 +602,8 @@ class PhaseVortexCombat:
         mask = torch.exp(-(dx**2 + dy**2) / (8.0**2))
         for c in range(3):
             if self.bot_vector[c] > 0.01:
-                self.density_complex[0, c*2] += mask * 15.0 * dt * self.bot_vector[c]
+                # Direct massive emission of hostile aura density
+                self.density_complex[0, c*2] += mask * 45.0 * dt * self.bot_vector[c]
 
         return bot_tq
 
@@ -504,25 +619,29 @@ class PhaseVortexCombat:
         self.v = torch.nan_to_num(self.v, nan=0.0) * 0.90
         self.density_complex = torch.nan_to_num(self.density_complex, nan=0.0) * 0.95
         
-        # 1. Player Input & 120-Jet Physics
-        if is_real_data and eeg_c0_spectrum is not None:
+        # 1. Process continuous inputs (Gamepad Neuro-Assist vs 120-jet FreeEEG16 spectral layers)
+        eeg_c0_spectrum = self._evaluate_cognitive_esports_loop(eeg_c0_spectrum, is_real_data, dt)
+        
+        # 2. Player Input & 120-Jet Physics
+        if eeg_c0_spectrum is not None:
             self._apply_120_jet_eeg_physics(eeg_c0_spectrum, self.player_pin_pos, dt)
         
-        # 2. Player Movement Input
+        # 3. Player Movement Input (Speed scales dynamically in Pure Mastery Mode)
+        move_mult = 1.35 if self.is_pure_mastery else 1.0
         self.player_angle -= eeg_tq * 3.5 * dt
-        bci_force_x = (-math.sin(self.player_angle) * -eeg_vy + math.cos(self.player_angle) * eeg_vx) * 1200.0 * dt
-        bci_force_y = (-math.cos(self.player_angle) * -eeg_vy - math.sin(self.player_angle) * eeg_vx) * 1200.0 * dt
+        bci_force_x = (-math.sin(self.player_angle) * -eeg_vy + math.cos(self.player_angle) * eeg_vx) * 1200.0 * dt * move_mult
+        bci_force_y = (-math.cos(self.player_angle) * -eeg_vy - math.sin(self.player_angle) * eeg_vx) * 1200.0 * dt * move_mult
         
         px_g, py_g = int((self.player_pos[0]/self.WIDTH)*self.res), int((self.player_pos[1]/self.HEIGHT)*self.res)
         if 0 < px_g < self.res and 0 < py_g < self.res:
             self.u[0, 0, py_g-2:py_g+3, px_g-2:px_g+3] += bci_force_x
             self.v[0, 0, py_g-2:py_g+3, px_g-2:px_g+3] += bci_force_y
 
-        # 3. Active Domain Pumping & Explosions
+        # 4. Active Domain Pumping & Explosions
         target_f = 1.0 if self.player_vector[0] > self.player_vector[2] else -1.0 
         target_s = 1.0 if self.player_vector[0] > 0.5 else -1.0
         
-        # Only allows active pumping if the player has synthesized a valid non-slag core
+        # Allows active pumping if the player has a valid non-slag core
         if not self.is_player_slag:
             if abs(self.player_freq_val - target_f) < 0.6 and abs(self.player_spatial_val - target_s) < 0.6:
                 self.player_domain_charge += dt * 1.5
@@ -540,33 +659,61 @@ class PhaseVortexCombat:
             if self.player_vector[c] > 0.01:
                 self.density_complex[0, c*2] += mask * 15.0 * dt * self.player_vector[c]
 
-        # 4. Domain Clashes & Bifurcations
+        # 5. Non-Linear Wave-Field Coupling (Phase-Amplitude Modulation)
+        R_re, R_im = self.density_complex[0, 0], self.density_complex[0, 1]
+        G_re, G_im = self.density_complex[0, 2], self.density_complex[0, 3]
+        B_re, B_im = self.density_complex[0, 4], self.density_complex[0, 5]
+        
+        amp_R = torch.hypot(R_re, R_im) + 1e-8
+        amp_G = torch.hypot(G_re, G_im) + 1e-8
+        amp_B = torch.hypot(B_re, B_im) + 1e-8
+        
+        phase_R = torch.atan2(R_im, R_re)
+        phase_B = torch.atan2(B_im, B_re)
+        
+        # SMR Catalyst pulls Yin and Yang phases into synchronization
+        phase_diff = phase_R - phase_B
+        lock_in_force = amp_G * torch.sin(phase_diff) * 28.0 * dt
+        
+        # Phase-Amplitude coupling based on active cognitive stabilizer lens focus similarity
+        pac_coupling = self.pill_stabilization_factor if is_real_data else 0.5
+        amp_R_new = amp_R * (1.0 + pac_coupling * amp_B * torch.cos(phase_B) * dt)
+        
+        phase_R_new = phase_R - lock_in_force
+        phase_B_new = phase_B + lock_in_force
+        
+        self.density_complex[0, 0] = amp_R_new * torch.cos(phase_R_new)
+        self.density_complex[0, 1] = amp_R_new * torch.sin(phase_R_new)
+        self.density_complex[0, 4] = amp_B * torch.cos(phase_B_new)
+        self.density_complex[0, 5] = amp_B * torch.sin(phase_B_new)
+
+        # 6. Domain Clashes & Bifurcations
         self._apply_domain_rule_imposition(dt)
 
-        # 5. Rogue Cultivator AI Step
+        # 7. Rogue Cultivator AI Step
         bot_tq = self._bot_ai_logic(dt)
 
-        # 6. Physical Stress & Tension Jitter forces
+        # 8. Physical Stress & Tension Jitter forces
         player_disruption = self._evaluate_kuramoto_neural_decoherence(self.player_pin_pos, self.player_vector, is_player=True, dt=dt)
         self.player_pin_pos[self.player_edge_intact] += player_disruption[self.player_edge_intact] * dt
         
         bot_disruption = self._evaluate_kuramoto_neural_decoherence(self.bot_pin_pos, self.bot_vector, is_player=False, dt=dt)
         self.bot_pin_pos[self.bot_edge_intact] += bot_disruption[self.bot_edge_intact] * dt
 
-        # 7. Kuramoto Cohesion Win/Loss Condition (Shattered Connectome)
-        if self.player_integrity < 0.25:
+        # 9. Kuramoto Cohesion Win/Loss Condition (Shattered Connectome)
+        if self.player_integrity < 0.20:
             self.winner = "Rogue Cultivator"
-        elif self.bot_integrity < 0.25:
+        elif self.bot_integrity < 0.20:
             self.winner = "Player"
 
-        # 8. Kinematics Updates
+        # 10. Kinematics Updates
         self.player_pos, self.player_pin_pos, self.player_edge_intact = self._update_slime_kinematics(
             self.player_pos, self.player_pin_pos, self.player_edge_intact, self.player_angle, eeg_tq, self.player_spatial_val, True, dt)
             
         self.bot_pos, self.bot_pin_pos, self.bot_edge_intact = self._update_slime_kinematics(
             self.bot_pos, self.bot_pin_pos, self.bot_edge_intact, self.bot_angle, bot_tq, 0.0, False, dt)
 
-        # 9. Advection & Projection
+        # 11. Advection & Projection
         self.density_complex = self.solver.advect(self.density_complex, self.u, self.v, dt)
         
         R = torch.sqrt(self.density_complex[:, 0]**2 + self.density_complex[:, 1]**2)
@@ -582,8 +729,8 @@ class PhaseVortexCombat:
         self._update_render_density(self.player_pin_pos, self.player_density, self.player_edge_intact)
         self._update_render_density(self.bot_pin_pos, self.bot_density, self.bot_edge_intact)
 
-    def _update_render_density(self, pin_pos, density_tensor, edge_intact):
-        active_nodes = pin_pos[edge_intact]
+    def _update_render_density(self, pin_pos, density_tensor, edge_intact_mask):
+        active_nodes = pin_pos[edge_intact_mask]
         if active_nodes.numel() == 0:
             density_tensor.zero_()
             return

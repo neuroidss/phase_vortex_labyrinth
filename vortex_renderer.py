@@ -7,11 +7,18 @@ import math
 from implicit_config import ALCHEMY_ENTITIES_CONFIG, SEMANTIC_PILLS_DB
 
 class VortexRenderer:
+    """
+    Affine Rendering Engine with Integrated Connectome Feedback.
+    Handles the spatial coordinates transformation to torus projection
+    and maps neural synchrony signatures onto high-fidelity visual assets.
+    """
     def __init__(self, width, height, zoom_factor=1.35):
         self.WIDTH = width
         self.HEIGHT = height
         self.ZOOM = zoom_factor
-        self.font = None
+        self.debug_font = None
+        self.alchemy_font = None
+        self.hud_font = None
         self.title_font = None
 
     def render_field(self, arena):
@@ -75,7 +82,7 @@ class VortexRenderer:
             bot_val = cam_bot[0, 0].unsqueeze(-1)
             bot_val_contrasted = torch.clamp((bot_val - 0.04) / 0.75, 0.0, 1.0)
             
-            b_color = (0.6, 0.0, 0.0) 
+            b_color = [0.6, 0.0, 0.0] 
             if hasattr(arena, 'bot_pill_name') and arena.bot_pill_name in SEMANTIC_PILLS_DB:
                 c = SEMANTIC_PILLS_DB[arena.bot_pill_name]['color']
                 b_color = [c[0]/255.0, c[1]/255.0, c[2]/255.0]
@@ -161,7 +168,6 @@ class VortexRenderer:
                 pygame.draw.circle(surface, (255, 100, 0), (int(sx), int(sy)), 2)
 
     def draw_combat_debug(self, surface, arena):
-        """ Draws a real-time spectroscopy panel with coupled oscillator diagnostic visuals """
         panel_w, panel_h = 320, 310
         panel_x, panel_y = self.WIDTH - panel_w - 15, 15
         
@@ -170,15 +176,14 @@ class VortexRenderer:
         surface.blit(s, (panel_x, panel_y))
         pygame.draw.rect(surface, (255, 100, 100), (panel_x, panel_y, panel_w, panel_h), 1)
         
-        if self.font is None:
-            self.font = pygame.font.SysFont("Consolas", 13, bold=True)
+        if self.debug_font is None:
+            self.debug_font = pygame.font.SysFont("Consolas", 13, bold=True)
             
-        title = self.font.render("CONNECTOME SPECTROSCOPY (DIAG)", True, (255, 100, 100))
+        title = self.debug_font.render("CONNECTOME SPECTROSCOPY (DIAG)", True, (255, 100, 100))
         surface.blit(title, (panel_x + 10, panel_y + 8))
         
         y_offset = panel_y + 30
         
-        # Raw Diagnostic Extraction
         raw_ax = getattr(arena, 'raw_axes', [])
         raw_btn = getattr(arena, 'raw_buttons', [])
         
@@ -194,14 +199,20 @@ class VortexRenderer:
         else:
             btn_line = "Raw Btns: None"
 
-        # Calculate continuous float health based on Kuramoto phase order parameter H
         p_integ = getattr(arena, 'player_integrity', 1.0)
         b_integ = getattr(arena, 'bot_integrity', 1.0)
+
+        coupling_str = f"Coupling (K): {arena.player_K_active:.1f} vs {arena.bot_K:.1f}"
+
+        assist_active = getattr(arena, 'assist_mode_active', False)
+        profile_name = getattr(arena, 'assist_profile', "FreeEEG16")
+        assist_label = f"Control Mode: {profile_name}" + (" [ASSIST]" if assist_active else "")
 
         metrics = [
             f"Your Core   : {arena.player_pill_name}",
             f"Rogue Core  : {arena.bot_pill_name}",
-            f"Coupling (K): {arena.player_K:.1f} vs {arena.bot_K:.1f}",
+            coupling_str,
+            assist_label,
             "-" * 37,
             ax_line,
             btn_line,
@@ -223,27 +234,28 @@ class VortexRenderer:
         
         for met in metrics:
             if met.startswith("-"):
-                text = self.font.render(met, True, (255, 100, 100))
+                text = self.debug_font.render(met, True, (255, 100, 100))
             elif "Axes" in met or "Btns" in met:
-                text = self.font.render(met, True, (0, 255, 100) if raw_ax else (150, 150, 150))
+                text = self.debug_font.render(met, True, (0, 255, 100) if raw_ax else (150, 150, 150))
             elif "Dissonance" in met or "Clash" in met:
-                text = self.font.render(met, True, (255, 200, 150))
+                text = self.debug_font.render(met, True, (255, 200, 150))
             elif "Absorbed" in met:
-                text = self.font.render(met, True, (100, 255, 100) if arena.energy_absorbed > 0 else (255, 255, 255))
+                text = self.debug_font.render(met, True, (100, 255, 100) if arena.energy_absorbed > 0 else (255, 255, 255))
             elif "Freq" in met or "Spat" in met:
-                text = self.font.render(met, True, (0, 255, 255))
+                text = self.debug_font.render(met, True, (0, 255, 255))
+            elif "Control" in met:
+                text = self.debug_font.render(met, True, (255, 150, 0) if assist_active else (0, 255, 200))
             elif "Jitter" in met:
-                text = self.font.render(met, True, (255, 100, 100) if "Bot" in met else (100, 255, 255))
+                text = self.debug_font.render(met, True, (255, 100, 100) if "Bot" in met else (100, 255, 255))
             elif "Integrity" in met:
                 val = p_integ if "(P)" in met else b_integ
                 col = (0, 255, 100) if val > 0.7 else ((255, 200, 0) if val > 0.4 else (255, 50, 50))
-                text = self.font.render(met, True, col)
+                text = self.debug_font.render(met, True, col)
             else:
-                text = self.font.render(met, True, (255, 255, 255))
+                text = self.debug_font.render(met, True, (255, 255, 255))
             surface.blit(text, (panel_x + 12, y_offset))
             y_offset += 12
 
-        # Draw the polari-oscillator Kuramoto Circle (Connectome Phase Radar)
         cx, cy = panel_x + panel_w - 45, panel_y + 110
         pygame.draw.circle(surface, (50, 40, 60), (cx, cy), 30, 1)
         
@@ -264,43 +276,73 @@ class VortexRenderer:
                 pygame.draw.circle(surface, (255, 50, 100), (bx, by), 2)
 
     def draw_combat_ui(self, surface, arena):
-        """ Render UI specific to the Arena Domain Clash """
-        if self.font is None:
-            self.font = pygame.font.SysFont("Consolas", 18, bold=True)
+        if self.hud_font is None:
+            self.hud_font = pygame.font.SysFont("Consolas", 18, bold=True)
+        if self.title_font is None:
             self.title_font = pygame.font.SysFont("Consolas", 42, bold=True)
             
         self.draw_combat_debug(surface, arena)
             
-        # Top HUD
-        diff_text = self.font.render(f"TRIBULATION LEVEL: {arena.difficulty}", True, (255, 100, 100))
+        diff_text = self.hud_font.render(f"TRIBULATION LEVEL: {arena.difficulty}", True, (255, 100, 100))
         surface.blit(diff_text, (self.WIDTH // 2 - diff_text.get_width()//2, 20))
         
         p_integ = getattr(arena, 'player_integrity', 1.0)
         b_integ = getattr(arena, 'bot_integrity', 1.0)
 
-        # Draw continuous Phase-Locked health bars (cohesion derived from Kuramoto order parameter)
-        p_text = self.font.render(f"YOUR PHASIC INTEGRITY: {p_integ*100:.1f}%", True, (0, 255, 200))
+        p_text = self.hud_font.render(f"YOUR PHASIC INTEGRITY: {p_integ*100:.1f}%", True, (0, 255, 200))
         surface.blit(p_text, (50, self.HEIGHT - 50))
         
-        b_text = self.font.render(f"ROGUE INTEGRITY: {b_integ*100:.1f}%", True, (255, 50, 50))
+        b_text = self.hud_font.render(f"ROGUE INTEGRITY: {b_integ*100:.1f}%", True, (255, 50, 50))
         surface.blit(b_text, (self.WIDTH - b_text.get_width() - 50, self.HEIGHT - 50))
         
-        # Pill Matchups and visual Domain shockwave indicators
         p_ch_val = int(arena.player_domain_charge * 100.0)
-        p_pill_text = self.font.render(f"DOMAIN: {arena.player_pill_name} [Pulse: {p_ch_val}%]", True, (200, 255, 220))
+        p_pill_text = self.hud_font.render(f"DOMAIN: {arena.player_pill_name} [Pulse: {p_ch_val}%]", True, (200, 255, 220))
         surface.blit(p_pill_text, (50, self.HEIGHT - 80))
         
         b_ch_val = int(arena.bot_domain_charge * 100.0)
-        b_pill_text = self.font.render(f"DOMAIN: {arena.bot_pill_name} [Pulse: {b_ch_val}%]", True, (255, 200, 200))
+        b_pill_text = self.hud_font.render(f"DOMAIN: {arena.bot_pill_name} [Pulse: {b_ch_val}%]", True, (255, 200, 200))
         surface.blit(b_pill_text, (self.WIDTH - b_pill_text.get_width() - 50, self.HEIGHT - 80))
 
-        # Visual indicator of the domain charging aura around the player
-        if hasattr(arena, 'player_domain_charge') and arena.player_domain_charge > 0.05:
+        # 1. Pulsing Protection Shield Aura (Cyan/Green standing wave)
+        if hasattr(arena, 'player_K_active') and arena.player_K_active > arena.player_K + 1.0:
+            mean_iplv = (arena.player_K_active - arena.player_K) / 75.0
+            shield_radius = int(35 + mean_iplv * 55)
+            shield_surface = pygame.Surface((self.WIDTH, self.HEIGHT), pygame.SRCALPHA)
+            glow_alpha = int(60 + 130 * mean_iplv * abs(math.sin(pygame.time.get_ticks() * 0.01)))
+            pygame.draw.circle(shield_surface, (0, 255, 200, glow_alpha), (int(self.WIDTH/2), int(self.HEIGHT/2)), shield_radius, 3)
+            pygame.draw.circle(shield_surface, (0, 255, 200, int(glow_alpha/4)), (int(self.WIDTH/2), int(self.HEIGHT/2)), shield_radius - 5)
+            surface.blit(shield_surface, (0, 0))
+
+        # 2. Focused Brain Synchronization Beam (Scrambles bot nodes on high imaginary PLV)
+        if getattr(arena, 'player_beam_active', False):
+            bx, by = arena.bot_pos[0].item(), arena.bot_pos[1].item()
+            px, py = arena.player_pos[0].item(), arena.player_pos[1].item()
+            
+            theta = -arena.player_angle
+            cos_t, sin_t = math.cos(theta), math.sin(theta)
+            
+            dx = (bx - px + self.WIDTH/2) % self.WIDTH - self.WIDTH/2
+            dy = (by - py + self.HEIGHT/2) % self.HEIGHT - self.HEIGHT/2
+            
+            sx = self.WIDTH / 2.0
+            sy = self.HEIGHT / 2.0
+            ex = self.WIDTH / 2.0 + (dx * cos_t + dy * sin_t) / self.ZOOM
+            ey = self.HEIGHT / 2.0 + (-dx * sin_t + dy * cos_t) / self.ZOOM
+            
+            intensity = getattr(arena, 'player_beam_intensity', 1.0)
+            beam_width = max(2, int(intensity * 4.5))
+            
+            beam_surface = pygame.Surface((self.WIDTH, self.HEIGHT), pygame.SRCALPHA)
+            pygame.draw.line(beam_surface, (0, 255, 255, 230), (int(sx), int(sy)), (int(ex), int(ey)), beam_width)
+            pygame.draw.line(beam_surface, (255, 255, 255, 255), (int(sx), int(sy)), (int(ex), int(ey)), max(1, beam_width // 2))
+            pygame.draw.line(beam_surface, (180, 50, 255, 110), (int(sx), int(sy)), (int(ex), int(ey)), beam_width + 10)
+            surface.blit(beam_surface, (0, 0))
+
+        if getattr(arena, 'player_domain_charge', 0.0) > 0.05:
             cx, cy = self.WIDTH // 2, self.HEIGHT // 2
             aura_radius = int(25.0 * arena.player_domain_charge / self.ZOOM)
             pygame.draw.circle(surface, (255, 0, 255, 80), (cx, cy), aura_radius + 15, 2)
 
-        # Winner Splash Screen
         if arena.winner:
             overlay = pygame.Surface((self.WIDTH, self.HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 180))
@@ -312,15 +354,12 @@ class VortexRenderer:
             res_text = self.title_font.render(result, True, color)
             surface.blit(res_text, (self.WIDTH // 2 - res_text.get_width()//2, self.HEIGHT // 2 - 50))
             
-            info = self.font.render("Transitioning to Next Cycle...", True, (200, 200, 200))
+            info = self.hud_font.render("Transitioning to Next Cycle...", True, (200, 200, 200))
             surface.blit(info, (self.WIDTH // 2 - info.get_width()//2, self.HEIGHT // 2 + 20))
 
     def draw_debug_window(self, surface, arena):
-        # Prevent Labyrinth debug from drawing during combat
         if hasattr(arena, 'bot_density'): return
-        
-        if not getattr(arena, 'cfg', {}).get('show_debug_window', True):
-            return
+        if not getattr(arena, 'cfg', {}).get('show_debug_window', True): return
             
         panel_w, panel_h = 300, 310
         panel_x, panel_y = self.WIDTH - panel_w - 15, 15
@@ -330,10 +369,10 @@ class VortexRenderer:
         surface.blit(s, (panel_x, panel_y))
         pygame.draw.rect(surface, (0, 255, 200), (panel_x, panel_y, panel_w, panel_h), 1)
         
-        if self.font is None:
-            self.font = pygame.font.SysFont("Consolas", 13, bold=True)
+        if self.debug_font is None:
+            self.debug_font = pygame.font.SysFont("Consolas", 13, bold=True)
             
-        title = self.font.render("EXOCORTEX SPECTROSCOPY", True, (0, 255, 200))
+        title = self.debug_font.render("EXOCORTEX SPECTROSCOPY", True, (0, 255, 200))
         surface.blit(title, (panel_x + 10, panel_y + 8))
         
         q = arena.pill_quality
@@ -362,16 +401,16 @@ class VortexRenderer:
         
         for met in metrics:
             if met.startswith("-"):
-                text = self.font.render(met, True, (0, 255, 200))
+                text = self.debug_font.render(met, True, (0, 255, 200))
             elif "Match" in met or "Envelope" in met or "Stabil" in met or "Spin" in met:
-                text = self.font.render(met, True, (200, 255, 220))
+                text = self.debug_font.render(met, True, (200, 255, 220))
             elif "Quality" in met:
                 col = (0, 255, 100) if q >= 80.0 else ((255, 200, 0) if q >= 40.0 else (255, 100, 100))
-                text = self.font.render(met, True, col)
+                text = self.debug_font.render(met, True, col)
             elif "Emergent" in met:
-                text = self.font.render(met, True, (255, 150, 255))
+                text = self.debug_font.render(met, True, (255, 150, 255))
             else:
-                text = self.font.render(met, True, (255, 255, 255))
+                text = self.debug_font.render(met, True, (255, 255, 255))
             surface.blit(text, (panel_x + 12, y_offset))
             y_offset += 16
             
@@ -430,8 +469,9 @@ class VortexRenderer:
             pygame.draw.circle(surface, col, (ex, ey), 12)
             pygame.draw.circle(surface, (255, 255, 255), (ex, ey), 12 + pulse//10, 2)
             
-            if self.font is None: self.font = pygame.font.SysFont("Consolas", 14, bold=True)
-            text = self.font.render(icon, True, (255, 255, 255))
+            if self.alchemy_font is None: 
+                self.alchemy_font = pygame.font.SysFont("Consolas", 14, bold=True)
+            text = self.alchemy_font.render(icon, True, (255, 255, 255))
             surface.blit(text, (ex - text.get_width()//2, ey - 22))
 
         if arena.smelting_progress > 0.0 and not arena.pill_created:
@@ -443,13 +483,19 @@ class VortexRenderer:
             
             pump_active = arena.score_temp > 0.5 and (arena.score_resonance * arena.score_containment) > 0.5
             status_text = "BIFURCATION PUMP ACTIVE" if pump_active else "ALIGNMENT REQUIRED..."
-            color = (0, 255, 255) if pump_active else (255, 255, 255)
+            color = (0, 255, 100) if pump_active else (255, 100, 100)
             
-            text = self.font.render(status_text, True, color)
-            surface.blit(text, (self.WIDTH // 2 - text.get_width()//2, by - 25))
-            
+            if self.alchemy_font is None:
+                self.alchemy_font = pygame.font.SysFont("Consolas", 14, bold=True)
+            shadow = self.alchemy_font.render(status_text, True, (0, 0, 0))
+            text_el = self.alchemy_font.render(status_text, True, color)
+            surface.blit(shadow, (bx + 2, by - 28))
+            surface.blit(text_el, (bx, by - 30))
+
         elif arena.pill_created:
-            text = self.font.render(f"PILL FORGED: {arena.emergent_pill_name}", True, (255, 200, 0))
+            if self.alchemy_font is None:
+                self.alchemy_font = pygame.font.SysFont("Consolas", 14, bold=True)
+            text = self.alchemy_font.render(f"PILL FORGED: {arena.emergent_pill_name}", True, (255, 200, 0))
             surface.blit(text, (self.WIDTH // 2 - text.get_width()//2, self.HEIGHT - 60))
 
     def draw_ui(self, surface, arena):

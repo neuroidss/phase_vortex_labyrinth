@@ -13,6 +13,12 @@ from vortex_telemetry import update_rune_zones
 
 
 class PhaseVortexArena:
+    """
+    Cauldron Smelting and Labyrinth Navigation Engine.
+    Implements multi-frequency cross-coherence coupling equations.
+    Allows high-density FreeEEG16 operators to generate order out of fluid chaos
+    through real-time Phase-Amplitude Coupling and non-linear wave synchronization.
+    """
     def __init__(self, device, width, height, res, seed=202607):
         self.device = device
         self.WIDTH, self.HEIGHT = width, height
@@ -46,7 +52,7 @@ class PhaseVortexArena:
         self.u = torch.zeros((1, 1, res, res), device=device)
         self.v = torch.zeros((1, 1, res, res), device=device)
         
-        # Комплексная плотность как векторное пространство C^3
+        # Complex density representing unified C^3 vector space
         self.density_complex = torch.zeros((1, 6, res, res), device=device)
         self.density = torch.zeros((1, 3, res, res), device=device) 
         
@@ -81,7 +87,7 @@ class PhaseVortexArena:
         )
         self.rune_zones = []
         
-        # Динамические параметры
+        # Dynamic alchemical matrices
         self.cauldron_temp = 300.0
         self.mixture_entropy = 1.0
         self.pill_quality = 100.0
@@ -135,7 +141,7 @@ class PhaseVortexArena:
         self.eeg_c0_matrix.zero_()
         self.rune_zones = []
 
-        # Генеративный спавн сущностей
+        # Spawn alchemical entities in designated labyrinth sectors
         self.alchemy_entities = []
         for ent_cfg in ALCHEMY_ENTITIES_CONFIG:
             e_pos = torch.tensor([
@@ -303,16 +309,11 @@ class PhaseVortexArena:
             jet_force_x = c0_120 * dx_ideal * force_multiplier
             jet_force_y = c0_120 * dy_ideal * force_multiplier
             
-            actual_mid_x, actual_mid_y = mid_x - com[0], mid_y - com[1]
-            dist_mid = torch.sqrt(actual_mid_x**2 + actual_mid_y**2) + 1e-5
-            jet_force_x += (-actual_mid_y / dist_mid) * eeg_tq * 30.0
-            jet_force_y += (actual_mid_x / dist_mid) * eeg_tq * 30.0
-            
             pin_gx_120 = torch.remainder((mid_x / self.WIDTH) * self.res, self.res)
             pin_gy_120 = torch.remainder((mid_y / self.HEIGHT) * self.res, self.res)
             dx_shape_120 = torch.remainder(self.x_indices.unsqueeze(0) - pin_gx_120.reshape(120, 1, 1) + self.res/2, self.res) - self.res/2
             dy_shape_120 = torch.remainder(self.y_indices.unsqueeze(0) - pin_gy_120.reshape(120, 1, 1) + self.res/2, self.res) - self.res/2
-            is_active_120 = (~self.pin_captured[self.pair_i]) & (~self.pin_captured[self.pair_j])
+            
             node_influence_120 = torch.exp(-(dx_shape_120**2 + dy_shape_120**2) / (node_radius * 0.6)) * is_active_120.float().reshape(120, 1, 1)
             node_inf_120_norm = node_influence_120 / (torch.sum(node_influence_120, dim=(1, 2), keepdim=True) + 1e-8)
             bci_force_grid_x = torch.sum(node_inf_120_norm * jet_force_x.reshape(120, 1, 1), dim=0)
@@ -321,6 +322,11 @@ class PhaseVortexArena:
         w_pad = F.pad(self.wall_density, (1, 1, 1, 1), mode='circular')
         grad_x_wall = 0.5 * (w_pad[:, :, 1:-1, 2:] - w_pad[:, :, 1:-1, :-2])
         grad_y_wall = 0.5 * (w_pad[:, :, 2:, 1:-1] - w_pad[:, :, :-2, 1:-1])
+
+        # --- SPECTRAL EXTRACTION OF COHERENCE LAYERS ---
+        theta_coh_val = 0.0
+        smr_coh_val = 0.0
+        gamma_coh_val = 0.0
 
         if is_real_data and eeg_freqs is not None and eeg_c0_spectrum is not None:
             theta_mask = (eeg_freqs >= 4.0) & (eeg_freqs <= 8.0)
@@ -332,11 +338,58 @@ class PhaseVortexArena:
             outer_idx = [0, 1, 3, 4, 6, 7, 8, 9, 11, 12, 14, 15]
             c0_inner = torch.sum(self.eeg_c0_matrix[inner_idx][:, inner_idx]).item()
             c0_outer = torch.sum(self.eeg_c0_matrix[outer_idx][:, outer_idx]).item()
-            alch_spatial = max(-1.0, min(1.0, (c0_inner * 3.0 - c0_outer) / (c0_inner + c0_outer + 1e-5)))
+            alch_spatial = max(-1.0, min(1.0, (c0_inner - c0_outer) / (c0_inner + c0_outer + 1e-5) * 2.0))
 
-        # РАСЧЕТ ХИМИЧЕСКИХ ПАРАМЕТРОВ (ДИНАМИЧЕСКИЙ АТТРАКТОР)
-        self.cauldron_temp = 300.0 + (abs(eeg_tq) * 1200.0) + ((alch_spatial + 1.0) / 2.0) * 1500.0
+            # Full multi-frequency resolution extraction
+            num_bins = eeg_c0_spectrum.shape[2]
+            t_slice = eeg_c0_spectrum[:, :, 2:5]
+            s_slice = eeg_c0_spectrum[:, :, 6:10]
+            g_slice = eeg_c0_spectrum[:, :, 15:51]
+            
+            theta_coh_val = torch.mean(torch.abs(t_slice)).item()
+            smr_coh_val   = torch.mean(torch.abs(s_slice)).item()
+            gamma_coh_val = torch.mean(torch.abs(g_slice)).item()
+
+        self.cauldron_temp = 300.0 + (eeg_tq**2) * 1500.0 + (gamma_coh_val * 2200.0)
+        self.cauldron_temp = max(300.0, min(4500.0, self.cauldron_temp))
+
+        # --- MULTI-FREQUENCY NON-LINEAR WAVE COUPLING (ORDER FROM CHAOS) ---
+        R_re, R_im = self.density_complex[0, 0], self.density_complex[0, 1]
+        G_re, G_im = self.density_complex[0, 2], self.density_complex[0, 3]
+        B_re, B_im = self.density_complex[0, 4], self.density_complex[0, 5]
         
+        amp_R = torch.hypot(R_re, R_im) + 1e-8
+        amp_G = torch.hypot(G_re, G_im) + 1e-8
+        amp_B = torch.hypot(B_re, B_im) + 1e-8
+        
+        phase_R = torch.atan2(R_im, R_re)
+        phase_B = torch.atan2(B_im, B_re)
+        
+        # 1. Phase-Locking: SMR Catalyst (Qi / Green) locks Yin and Yang into synchronization
+        phase_diff = phase_R - phase_B
+        lock_in_mult = 1.0 + smr_coh_val * 4.5 if is_real_data else 1.0
+        lock_in_force = amp_G * torch.sin(phase_diff) * 25.0 * lock_in_mult * dt
+        
+        # 2. Phase-Amplitude Coupling: Theta phase modulates Gamma amplitude
+        pac_strength = (theta_coh_val * gamma_coh_val) * 6.5 if is_real_data else 0.25
+        amp_R_new = amp_R * (1.0 + pac_strength * amp_B * torch.cos(phase_B) * dt * 2.0)
+        
+        phase_R_new = phase_R - lock_in_force
+        phase_B_new = phase_B + lock_in_force
+        
+        # Write back multi-frequency non-linear updates to the C^3 space
+        self.density_complex[0, 0] = amp_R_new * torch.cos(phase_R_new)
+        self.density_complex[0, 1] = amp_R_new * torch.sin(phase_R_new)
+        self.density_complex[0, 4] = amp_B * torch.cos(phase_B_new)
+        self.density_complex[0, 5] = amp_B * torch.sin(phase_B_new)
+
+        # 3. Dynamic viscous damping of chaotic fluid velocities if Theta coherence is high
+        if is_real_data:
+            viscous_absorption = theta_coh_val * 0.40
+            self.u *= (1.0 - viscous_absorption * dt)
+            self.v *= (1.0 - viscous_absorption * dt)
+
+        # Update scoring metrics
         target_f_val, target_tq_val = self.get_emergent_target()
         target_f = max(-1.0, min(1.0, (target_f_val - 14.0) / 66.0)) 
         target_s = max(-1.0, min(1.0, target_tq_val / 45.0))
@@ -361,7 +414,7 @@ class PhaseVortexArena:
             if dist_player < self.cell_w * 2.0:
                 resonance_mult = self.score_resonance * self.score_containment * self.score_temp
                 
-                # === БИФУРКАЦИОННЫЙ НАСОС (ЭКСПОРТ ЭНТРОПИИ) ===
+                # === BIFURCATION PUMP (ENTROPY EXPORT) ===
                 if self.score_temp > 0.5 and (self.score_resonance * self.score_containment) > 0.5:
                     R_re_pad = F.pad(self.density_complex[:, 0], (1, 1, 1, 1), mode='circular')
                     R_im_pad = F.pad(self.density_complex[:, 1], (1, 1, 1, 1), mode='circular')
@@ -370,7 +423,6 @@ class PhaseVortexArena:
                     B_re_pad = F.pad(self.density_complex[:, 4], (1, 1, 1, 1), mode='circular')
                     B_im_pad = F.pad(self.density_complex[:, 5], (1, 1, 1, 1), mode='circular')
                     
-                    # Шум = Градиент фазы (пространственная энтропия)
                     noise_field = torch.abs(R_re_pad[:, 1:-1, 2:] - R_re_pad[:, 1:-1, :-2]) + \
                                   torch.abs(R_im_pad[:, 2:, 1:-1] - R_im_pad[:, :-2, 1:-1]) + \
                                   torch.abs(G_re_pad[:, 1:-1, 2:] - G_re_pad[:, 1:-1, :-2]) + \
@@ -379,7 +431,12 @@ class PhaseVortexArena:
                                   torch.abs(B_im_pad[:, 2:, 1:-1] - B_im_pad[:, :-2, 1:-1])
                                   
                     FEIGENBAUM_DELTA = 4.6692016
-                    pump_power = (self.score_resonance * self.score_temp) * FEIGENBAUM_DELTA
+                    
+                    # Real-time multi-frequency coherence synchronization accelerates pump capacity up to 5x
+                    coherence_synergy = (theta_coh_val + smr_coh_val + gamma_coh_val) / 3.0 if is_real_data else 0.0
+                    pump_multiplier = 1.0 + (coherence_synergy * 4.0)
+                    
+                    pump_power = (self.score_resonance * self.score_temp) * FEIGENBAUM_DELTA * pump_multiplier
                     
                     cx_grid, cy_grid = (self.cauldron_pos[0]/self.WIDTH)*self.res, (self.cauldron_pos[1]/self.HEIGHT)*self.res
                     dist_c = torch.sqrt((self.x_indices - cx_grid)**2 + (self.y_indices - cy_grid)**2) + 1e-5
@@ -389,7 +446,7 @@ class PhaseVortexArena:
                     inside_cauldron = (dist_c < 12.0).float()
                     noise_field_sq = noise_field.squeeze(0)
                     
-                    # Физическое действие насоса: выплевываем хаос наружу, кристаллизуем внутри
+                    # Physical action of the pump: spits chaos out, crystallizes core inside
                     entropy_export = noise_field_sq * inside_cauldron * pump_power * 60.0 * dt
                     self.u[0, 0] += radial_x * entropy_export
                     self.v[0, 0] += radial_y * entropy_export
@@ -549,8 +606,7 @@ class PhaseVortexArena:
         ideal_pos_new = new_com.unsqueeze(0) + torch.stack([ideal_x_scaled, ideal_y_scaled], dim=1)
         self.pin_pos = apply_cohesion_constraint(self.pin_pos, ideal_pos_new, self.pin_captured, scale, blend)
         
-        pin_uv_raw_post = (self.pin_pos / self.screen_size) * 2.0 - 1.0
-        pin_uv_post = torch.remainder(pin_uv_raw_post + 1.0, 2.0) - 1.0
+        pin_uv_post = torch.remainder((self.pin_pos / self.screen_size) * 2.0, 2.0) - 1.0
         w_val_sharp_post = F.grid_sample(self.wall_density, pin_uv_post.view(1, 1, 16, 2), align_corners=True).squeeze()
         
         push_mult = 12.0 + blend * 8.0

@@ -9,6 +9,22 @@ This project operates on the **Mathematical Universe Hypothesis** and the philos
 
 ---
 
+## ⚡ ULTRA-HIGH-DENSITY MICROSCOPY: THE FreeEEG16-alpha2 HARDWARE
+
+Unlike standard consumer EEG headbands or sparse clinical caps utilizing the International 10-20 standard (where electrodes are distributed decimeters apart across the entire skull), the **FreeEEG16-alpha2 is an ultra-high-density micro-array packing all 16 channels onto a miniature 26 mm diameter footprint.**
+
+### 🔬 Pangolin-Class Spatial Resolution
+This extreme density is equivalent to high-end scientific research grids (such as the *g.tec Pangolin*), shifting the acquisition paradigm from global macro-scale EEG to localized micro-state tracking. 
+*   **Miniature Footprint**: The actual coordinate space (as defined in `implicit_config.py`) maps the 16 contacts within a circle of roughly $13\text{ mm}$ radius ($26\text{ mm}$ diameter). 
+*   **Sub-Centimeter Cortical Patches**: Instead of measuring cross-hemispheric communication, the array targets highly localized cortical regions, capturing micro-spatial phase gradients ($\nabla \Phi$) and local synchronization within a single cortical area.
+
+### 🧮 The ciPLV Mathematical Mandate
+Because the electrodes are positioned mere millimeters apart, they are subject to extreme volume conduction. The electrical potentials propagating through the scalp and skull are subject to massive spatial low-pass filtering, causing different channels to record identical, instantaneous potential changes from the same underlying source.
+*   **Standard PLV Failure**: Using a standard Phase Locking Value (PLV) in this environment is mathematically invalid, as volume conduction creates false-positive zero-lag phase locking across the entire micro-array.
+*   **The ciPLV Solution**: The **Corrected Imaginary Phase Locking Value (ciPLV)** is physically and mathematically mandatory for this layout. By isolating only the imaginary part of the cross-spectrum and normalizing it against the real component, the engine completely discards zero-lag volume conduction, exposing the genuine, non-zero-lag synaptic phase-locking occurring between localized cortical columns.
+
+---
+
 ## 🔬 PEER-REVIEWED SCIENTIFIC FOUNDATION & DOIs
 
 Every mechanic in the QAR engine is derived from established computational neuroscience, complex systems, and non-equilibrium thermodynamics:
