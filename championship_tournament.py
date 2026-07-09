@@ -11,31 +11,31 @@ from vortex_combat import PhaseVortexCombat
 from vortex_renderer import VortexRenderer
 
 # --- RECT-GRID TOURNAMENT MATCHUPS CONFIGURATION ---
-# Define matchups to balance opposing vectors (Yang, Yin, Balanced, and Hundun Chaos)
+# Symmetrical Rock-Paper-Scissors cycle + Living Hybrid Demonstration
 MATCHUPS = [
     {
         "name": "Match 1: Aggressive Yang vs Defensive Yin",
-        "bot0": {"type": "bot", "pill_name": "Pure Yang Core", "custom_name": "Elder Pyro", "style": "Aggressive Yang", "quality": 95.0, "vector": [0.894, 0.447, 0.0], "desc": "Fiery physical charges."},
-        "bot1": {"type": "bot", "pill_name": "Deep Yin Core", "custom_name": "Frost Weaver", "style": "Defensive Yin", "quality": 95.0, "vector": [0.0, 0.447, 0.894], "desc": "Parry and defensive shields."},
-        "prediction": "Elder Pyro (Yang) is predicted to break Frost Weaver (Yin) via high temperature and physical aggression."
+        "bot0": {"type": "bot", "pill_name": "Pure Yang Core", "custom_name": "Elder Pyro", "style": "Aggressive Yang", "quality": 95.0, "vector": [1.0, 0.0, 0.0], "desc": "Fiery Gamma charges."},
+        "bot1": {"type": "bot", "pill_name": "Deep Yin Core", "custom_name": "Frost Weaver", "style": "Defensive Yin", "quality": 95.0, "vector": [0.0, 0.0, 1.0], "desc": "Defensive Water parries."},
+        "prediction": "Frost Weaver (Yin/Water) is predicted to douse and break Elder Pyro (Yang/Fire) via parries and defensive dissipation."
     },
     {
         "name": "Match 2: Speed Yang vs Elusive Yin",
-        "bot0": {"type": "bot", "pill_name": "Pure Yang Core", "custom_name": "Solar Flare", "style": "Speed Yang", "quality": 90.0, "vector": [0.894, 0.447, 0.0], "desc": "High velocity orbits."},
-        "bot1": {"type": "bot", "pill_name": "Deep Yin Core", "custom_name": "Lunar Shadow", "style": "Elusive Yin", "quality": 90.0, "vector": [0.0, 0.447, 0.894], "desc": "Evasive maneuvers."},
+        "bot0": {"type": "bot", "pill_name": "Pure Yang Core", "custom_name": "Solar Flare", "style": "Speed Yang", "quality": 90.0, "vector": [1.0, 0.0, 0.0], "desc": "High velocity orbits."},
+        "bot1": {"type": "bot", "pill_name": "Deep Yin Core", "custom_name": "Lunar Shadow", "style": "Elusive Yin", "quality": 90.0, "vector": [0.0, 0.0, 1.0], "desc": "Evasive maneuvers."},
         "prediction": "Lunar Shadow is predicted to evade Solar Flare's charges and win via slow domain-exhaustion."
     },
     {
-        "name": "Match 3: Balanced Triad vs Chaotic Hundun",
-        "bot0": {"type": "bot", "pill_name": "Foundation Pill", "custom_name": "Balanced Disciple", "style": "Balanced Triad", "quality": 95.0, "vector": [0.577, 0.577, 0.577], "desc": "Symmetric catalyst."},
-        "bot1": {"type": "bot", "pill_name": "Turbulent Anomaly", "custom_name": "Chaos Hundun", "style": "Chaotic Warp", "quality": 85.0, "vector": [0.707, 0.0, 0.707], "desc": "Erratic phase jumps."},
-        "prediction": "Balanced Disciple is predicted to win due to stable Kuramoto phase coupling and lower baseline noise."
+        "name": "Match 3: Freezing Flame vs SMR Catalyst",
+        "bot0": {"type": "bot", "pill_name": "Turbulent Anomaly", "custom_name": "Glacial Phoenix", "style": "Steady Triad", "quality": 95.0, "vector": [0.707, 0.0, 0.707], "desc": "Ice and Fire blended core (Mixed Nodes)."},
+        "bot1": {"type": "bot", "pill_name": "Foundation Pill", "custom_name": "Zen Disciple", "style": "Balanced Triad", "quality": 95.0, "vector": [0.0, 1.0, 0.0], "desc": "Resonant SMR focus."},
+        "prediction": "Glacial Phoenix (Freezing Flame) is predicted to break Zen Disciple (Grass) as its Yang nodes incinerate the green catalyst."
     },
     {
-        "name": "Match 4: Steady Triad vs Vortex Spinner",
-        "bot0": {"type": "bot", "pill_name": "Foundation Pill", "custom_name": "Zen Initiate", "style": "Steady Triad", "quality": 90.0, "vector": [0.577, 0.577, 0.577], "desc": "Resilient focus."},
-        "bot1": {"type": "bot", "pill_name": "Turbulent Anomaly", "custom_name": "Vortex Spinner", "style": "Vortex Spinner", "quality": 90.0, "vector": [0.707, 0.0, 0.707], "desc": "Violent rotational torque."},
-        "prediction": "Zen Initiate is predicted to absorb the spinner's turbulent currents and win through attrition."
+        "name": "Match 4: SMR Catalyst vs Defensive Yin",
+        "bot0": {"type": "bot", "pill_name": "Foundation Pill", "custom_name": "Zen Disciple", "style": "Steady Triad", "quality": 95.0, "vector": [0.0, 1.0, 0.0], "desc": "Resonant SMR focus."},
+        "bot1": {"type": "bot", "pill_name": "Deep Yin Core", "custom_name": "Frost Weaver", "style": "Defensive Yin", "quality": 95.0, "vector": [0.0, 0.0, 1.0], "desc": "Defensive Water parries."},
+        "prediction": "Zen Disciple (Catalyst/Grass) is predicted to absorb and lock Frost Weaver (Yin/Water) via high phase-coupling."
     }
 ]
 
@@ -82,7 +82,6 @@ def main():
         
         while running:
             dt = min(0.032, clock.tick() / 1000.0)
-            round_timer += dt
             
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -100,22 +99,16 @@ def main():
                         round_timer = 0.0
                         transition_timer = 0.0
 
-            p_integ = arena.actors[0]['integrity']
-            b_integ = arena.actors[1]['integrity']
-
-            # Calculate win probabilities based on Phasic Integrity
-            p0_sq = p_integ ** 2
-            p1_sq = b_integ ** 2
-            total_p = p0_sq + p1_sq + 1e-5
-            prob_0 = p0_sq / total_p
-            prob_1 = p1_sq / total_p
-
             # Execute a clean physics step in autonomous Bot vs Bot mode
             if transition_timer <= 0.0:
+                round_timer += dt
                 arena.step(dt, round_timer, None, 0.0, 0.0, 0.0, False, 0.0, 1.25)
                 
                 # Check for victory conditions
                 if arena.winner is not None:
+                    p_integ = arena.actors[0]['integrity']
+                    b_integ = arena.actors[1]['integrity']
+                    
                     # Record statistics
                     if arena.winner == "Player": # Actor 0
                         match_stats[current_match_idx]["bot0_wins"] += 1
@@ -129,10 +122,13 @@ def main():
                             f"Matchup   : {current_match['name']}\n"
                             f"Prediction: {current_match['prediction']}\n"
                             f"Winner     : {arena.winner} won!\n"
+                            f"Duration   : {round_timer:.2f} seconds\n"
                             f"End Phasic Integrity: {current_match['bot0']['custom_name']} = {p_integ*100:.1f}% | "
                             f"{current_match['bot1']['custom_name']} = {b_integ*100:.1f}%\n"
                             f"K Coupling: {arena.actors[0]['K_active']:.1f} vs {arena.actors[1]['K_active']:.1f}\n"
                             f"Dissonance: {arena.actors[0]['shear_stress']:.2f} vs {arena.actors[1]['shear_stress']:.2f}\n"
+                            f"Explosions: {arena.actors[0]['custom_name']} = {arena.actors[0]['explosions_triggered']} | "
+                            f"{arena.actors[1]['custom_name']} = {arena.actors[1]['explosions_triggered']}\n"
                             f"--------------------------------------------------\n\n"
                         )
                         f.write(log_str)
@@ -146,6 +142,16 @@ def main():
                     current_match_idx = (current_match_idx + 1) % len(MATCHUPS)
                     arena, current_match = init_match(current_match_idx)
                     round_timer = 0.0
+
+            p_integ = arena.actors[0]['integrity']
+            b_integ = arena.actors[1]['integrity']
+
+            # Calculate win probabilities based on Phasic Integrity
+            p0_sq = p_integ ** 2
+            p1_sq = b_integ ** 2
+            total_p = p0_sq + p1_sq + 1e-5
+            prob_0 = p0_sq / total_p
+            prob_1 = p1_sq / total_p
                     
             # Render visual viewport
             screen.blit(renderer.render_field(arena), (0, 0))

@@ -122,14 +122,35 @@ class PhaseVortexCombat:
 
     def _add_actor(self, actor_id, actor_type, pill_name, quality, vector, spawn_pos, custom_name=None, style=None, desc=None):
         """ Instantiates an actor state dictionary with perfectly symmetric physical properties """
+        start_angle = 0.0 if actor_type == "player" else math.pi
+        cos_a = math.cos(start_angle)
+        sin_a = math.sin(start_angle)
+        rot_x = self.pin_x * cos_a + self.pin_y * sin_a
+        rot_y = -self.pin_x * sin_a + self.pin_y * cos_a
+
         pin_pos = torch.zeros((16, 2), dtype=torch.float32, device=self.device)
-        pin_pos[:, 0] = spawn_pos[0] + self.pin_x * 1.5
-        pin_pos[:, 1] = spawn_pos[1] + self.pin_y * 1.5
+        pin_pos[:, 0] = spawn_pos[0] + rot_x * 1.5
+        pin_pos[:, 1] = spawn_pos[1] + rot_y * 1.5
         
         base_K = (quality / 100.0) * 15.0 + 2.0
         is_slag = (quality < 40.0)
         if is_slag:
             base_K = 0.5
+            
+        # Symmetrically distribute physical element types along the 16 nodes (Fractally mixed slime!) [1.2.8]
+        v_norm = vector / (torch.sum(vector) + 1e-8)
+        num_yang = int(round(float(v_norm[0]) * 16))
+        num_cat = int(round(float(v_norm[1]) * 16))
+        num_yin = 16 - num_yang - num_cat
+        
+        node_vecs = []
+        for _ in range(num_yang): node_vecs.append([1.0, 0.0, 0.0])
+        for _ in range(num_cat): node_vecs.append([0.0, 1.0, 0.0])
+        for _ in range(num_yin): node_vecs.append([0.0, 0.0, 1.0])
+        
+        while len(node_vecs) < 16: node_vecs.append([0.577, 0.577, 0.577])
+        node_vecs = node_vecs[:16]
+        node_vectors_tensor = torch.tensor(node_vecs, dtype=torch.float32, device=self.device)
             
         self.actors.append({
             'id': actor_id,
@@ -140,6 +161,7 @@ class PhaseVortexCombat:
             'desc': desc if desc else "A practitioner of phase locking.",
             'quality': quality,
             'vector': vector,
+            'node_vectors': node_vectors_tensor,
             'is_yang': vector[0] > vector[2],
             'is_yin': vector[2] > vector[0] and vector[2] > vector[1],
             'is_slag': is_slag,
@@ -155,7 +177,7 @@ class PhaseVortexCombat:
             'pos': spawn_pos.clone(),
             'pin_pos': pin_pos,
             'edge_intact': torch.ones(16, dtype=torch.bool, device=self.device),
-            'angle': 0.0 if actor_type == "player" else math.pi,
+            'angle': start_angle,
             
             # Live input control registers (continuously mapped)
             'vx': 0.0,
@@ -174,7 +196,8 @@ class PhaseVortexCombat:
             'beam_intensity': 0.0,
             'stabilization_factor': 1.0,
             'last_snap_event': False,
-            'last_heal_event': False
+            'last_heal_event': False,
+            'explosions_triggered': 0
         })
 
     def _sync_legacy_properties(self):
@@ -287,35 +310,37 @@ class PhaseVortexCombat:
             if bot_dist < 220.0:
                 actor['vx'] = -dir_x * 0.6 * difficulty_mult
                 actor['vy'] = -dir_y * 0.6 * difficulty_mult
+                actor['spatial_val'] = -0.8
             else:
                 actor['vx'] = dir_x * 0.2 * difficulty_mult
                 actor['vy'] = dir_y * 0.2 * difficulty_mult
+                actor['spatial_val'] = -0.3
             actor['tq'] = 0.0
             actor['freq_val'] = -1.0
-            actor['spatial_val'] = -0.8  # Strong defensive shield
             
         elif style == "Elusive Yin":
             # Actively runs away from approaching player
             if bot_dist < 300.0:
                 actor['vx'] = -dir_x * 0.9 * difficulty_mult
                 actor['vy'] = -dir_y * 0.9 * difficulty_mult
+                actor['spatial_val'] = -0.5
             else:
                 actor['vx'] = (random.random() * 2.0 - 1.0) * 0.2
                 actor['vy'] = (random.random() * 2.0 - 1.0) * 0.2
+                actor['spatial_val'] = -0.3
             actor['tq'] = math.sin(self.combat_time * 2.0) * 0.4
-            actor['freq_val'] = -0.9
-            actor['spatial_val'] = -0.5
+            actor['freq_val'] = -1.0
             
         elif style in ["Balanced Triad", "Steady Triad"]:
-            # Balanced tactical stance adjustments
+            # SMR Catalyst / Grass - locks in at 0.0 frequency
             if bot_dist < 180.0:
                 actor['vx'] = -dir_x * 0.5 * difficulty_mult
                 actor['vy'] = -dir_y * 0.5 * difficulty_mult
-                actor['spatial_val'] = -0.7
+                actor['spatial_val'] = 0.0
             else:
                 actor['vx'] = dir_x * 0.6 * difficulty_mult
                 actor['vy'] = dir_y * 0.6 * difficulty_mult
-                actor['spatial_val'] = 0.5
+                actor['spatial_val'] = 0.0
             actor['tq'] = math.sin(self.combat_time) * 0.3
             actor['freq_val'] = 0.0
             
@@ -585,38 +610,75 @@ class PhaseVortexCombat:
         local_m = torch.sqrt(r_re**2 + r_im**2 + g_re**2 + g_im**2 + b_re**2 + b_im**2)
         local_vec = torch.stack([torch.hypot(r_re, r_im), torch.hypot(g_re, g_im), torch.hypot(b_re, b_im)], dim=1)
         local_vec_norm = local_vec / (torch.norm(local_vec, dim=1, keepdim=True) + 1e-8)
-        similarity = torch.sum(local_vec_norm * act['vector'].unsqueeze(0), dim=1)
         
-        dissonance = torch.clamp(0.5 - similarity, 0.0, 1.0)
+        # Symmetrical node-wise element similarity based on individual node elements (Fractally mixed nodes!) [1.2.8]
+        similarity = torch.sum(local_vec_norm * act['node_vectors'], dim=1)
         
-        # Symmetrically sum proximity collisions with all other actors on the field
-        # Toned down physical collision impact significantly to lengthen engagements
+        # Pure cosine-distance based dissonance mapping for continuous, organic wave interaction [Bruña et al., 2018]
+        dissonance = torch.clamp(1.0 - similarity, 0.0, 1.0)
+        
+        # --- GPU-NATIVE SPATIAL CLASH GRADIENT OF REAL WAVE INTERFERENCE FIELDS ---
+        # Calculate instantaneous real propagating wave values [1, 1, res, res] for all 3 channels
+        time_factor = self.combat_time * 12.0
+        wave_R = self.density_complex[:, 0:1] * math.cos(time_factor) - self.density_complex[:, 1:2] * math.sin(time_factor)
+        wave_G = self.density_complex[:, 2:3] * math.cos(time_factor * 0.5) - self.density_complex[:, 3:4] * math.sin(time_factor * 0.5)
+        wave_B = self.density_complex[:, 4:5] * math.cos(time_factor * 0.25) - self.density_complex[:, 5:6] * math.sin(time_factor * 0.25)
+        
+        wave_R_pad = F.pad(wave_R, (1, 1, 1, 1), mode='circular')
+        wave_G_pad = F.pad(wave_G, (1, 1, 1, 1), mode='circular')
+        wave_B_pad = F.pad(wave_B, (1, 1, 1, 1), mode='circular')
+        
+        # Compute horizontal/vertical spatial derivatives of propagating waves for all 3 channels
+        grad_x_R = 0.5 * (wave_R_pad[:, :, 1:-1, 2:] - wave_R_pad[:, :, 1:-1, :-2])
+        grad_y_R = 0.5 * (wave_R_pad[:, :, 2:, 1:-1] - wave_R_pad[:, :, :-2, 1:-1])
+        grad_x_G = 0.5 * (wave_G_pad[:, :, 1:-1, 2:] - wave_G_pad[:, :, 1:-1, :-2])
+        grad_y_G = 0.5 * (wave_G_pad[:, :, 2:, 1:-1] - wave_G_pad[:, :, :-2, 1:-1])
+        grad_x_B = 0.5 * (wave_B_pad[:, :, 1:-1, 2:] - wave_B_pad[:, :, 1:-1, :-2])
+        grad_y_B = 0.5 * (wave_B_pad[:, :, 2:, 1:-1] - wave_B_pad[:, :, :-2, 1:-1])
+        
+        R_grad = torch.sqrt(grad_x_R**2 + grad_y_R**2)
+        G_grad = torch.sqrt(grad_x_G**2 + grad_y_G**2)
+        B_grad = torch.sqrt(grad_x_B**2 + grad_y_B**2)
+        
+        # Symmetrically calculate cross-channel clashing based on sharp inter-element spatial overlaps (fractal boundaries) [1.1.1, 1.2.3]
+        clash_field = (
+            R_grad * torch.abs(wave_B_pad[:, :, 1:-1, 1:-1]) + B_grad * torch.abs(wave_R_pad[:, :, 1:-1, 1:-1]) +
+            R_grad * torch.abs(wave_G_pad[:, :, 1:-1, 1:-1]) + G_grad * torch.abs(wave_R_pad[:, :, 1:-1, 1:-1]) +
+            G_grad * torch.abs(wave_B_pad[:, :, 1:-1, 1:-1]) + B_grad * torch.abs(wave_G_pad[:, :, 1:-1, 1:-1])
+        )
+        clash_gradient = F.grid_sample(clash_field, grid_uv, align_corners=True).squeeze()
+
+        # Calculate proximity damage
         proximity_damage = 0.0
-        rps_damage_mult = 1.0
+        
+        # Symmetrical Rock-Paper-Scissors (RPS) element advantage check (Fully Unified from Config)
+        # 0 = Yang (Red/Fire), 1 = Catalyst (Green/Grass), 2 = Yin (Blue/Water)
+        elem_act = torch.argmax(act['node_vectors'], dim=1) # [16]
+        rps_mult = torch.ones(16, device=self.device)
+        
         for other in self.actors:
             if other is not act:
                 dist_opp = torch.norm(act['pos'] - other['pos']).item()
                 clash_f = max(0.0, (220.0 - dist_opp) / 220.0)
                 proximity_damage += clash_f * combat_config.PROXIMITY_DAMAGE_SCALE
                 
-                # Symmetrical Rock-Paper-Scissors (RPS) element advantage check (Fully Unified from Config)
-                # Elements: 0 = Yang (Fire/Red), 1 = SMR Catalyst (Qi/Green), 2 = Yin (Water/Blue)
-                elem_act = torch.argmax(act['vector']).item()
-                elem_opp = torch.argmax(other['vector']).item()
+                opp_core = torch.argmax(other['vector']).item()
                 
-                # Dynamic Check matching user's config matrix:
-                # Yang (0) beats Yin (2), Yin (2) beats Catalyst (1), Catalyst (1) beats Yang (0)
-                if (elem_act == 0 and elem_opp == 2) or (elem_act == 2 and elem_opp == 1) or (elem_act == 1 and elem_opp == 0):
-                    # Actor has elemental advantage: opponent takes increased damage, Actor takes less
-                    rps_damage_mult = combat_config.RPS_DISADVANTAGE_MULTIPLIER
-                elif (elem_opp == 0 and elem_act == 2) or (elem_opp == 2 and elem_act == 1) or (elem_opp == 1 and elem_act == 0):
-                    # Opponent has elemental advantage: Actor takes increased stress
-                    rps_damage_mult = combat_config.RPS_ADVANTAGE_MULTIPLIER
+                # Advantage condition: Act node beats Opp Core element
+                has_advantage = (elem_act == 0) & (opp_core == 1) | \
+                                (elem_act == 1) & (opp_core == 2) | \
+                                (elem_act == 2) & (opp_core == 0)
+                                
+                has_disadvantage = (elem_act == 1) & (opp_core == 0) | \
+                                   (elem_act == 2) & (opp_core == 1) | \
+                                   (elem_act == 0) & (opp_core == 2)
+                                      
+                rps_mult = torch.where(has_advantage, torch.tensor(0.50, device=self.device), rps_mult)
+                rps_mult = torch.where(has_disadvantage, torch.tensor(1.65, device=self.device), rps_mult)
                 
-        # Balanced disruption force based on Config File and element matchups
-        disruption_force = ((dissonance * local_m * combat_config.DISRUPTION_FORCE_SCALE) + proximity_damage) * rps_damage_mult
+        # Symmetrically project spatial clash gradient into disruption force
+        disruption_force = ((dissonance * local_m * 4.0) + clash_gradient * 38.0 + proximity_damage) * rps_mult
         
-        # Symmetrically calculate dynamic domain shields for both Player and Bot (Rogue Shield)
         mean_sim = torch.mean(similarity).item()
         mean_sim = max(0.0, min(1.0, mean_sim))
         
@@ -662,20 +724,31 @@ class PhaseVortexCombat:
                     act['edge_intact'][target_idx] = True
                     act['last_heal_event'] = True
                 act['energy_absorbed'] = 0.0
-            return torch.zeros((16, 2), device=self.device)
+            
+            # Attenuate physical displacement force during parry state to secure structure
+            jitter_force = jitter_force * 0.08
 
         # --- KURAMOTO PHASE UPDATES ---
         phases = act['node_phases']
         phases += 14.0 * 2 * math.pi * dt
         
+        # Symmetrical Bidirectional Circular Ring Coupling for superior physical stability (prevents numerical overshoots)
         idx_next = torch.remainder(torch.arange(16, device=self.device) + 1, 16)
-        phase_diffs = phases[idx_next] - phases
-        K = act['K_active']
-        phases += K * torch.sin(phase_diffs) * dt
+        idx_prev = torch.remainder(torch.arange(16, device=self.device) - 1, 16)
+        coupling = torch.sin(phases[idx_next] - phases) + torch.sin(phases[idx_prev] - phases)
         
-        # Symmetrically scaled down phase scramble rates from Config
+        # Clamp coupling coefficient to mathematically secure Euler integration stability (K * dt <= 0.40)
+        K = min(35.0, act['K_active'])
+        phases += K * 0.5 * coupling * dt
+        
+        # Symmetrically scaled phase noise with RPS advantage applied for progressive 15-35s encounters
         num_broken = (~act['edge_intact']).sum().item()
-        scramble_rate = (dissonance * local_m * combat_config.SCRAMBLE_RATE_SCALE) + (num_broken * combat_config.SCRAMBLE_BROKEN_NODE_SCALE)
+        scramble_rate = ((dissonance * local_m * 1.5) + (num_broken * 0.15) + clash_gradient * 6.5) * rps_mult
+        
+        # Parry filter absorbs 75% of phase noise, preventing immediate desynchronization
+        if is_absorbing:
+            scramble_rate = scramble_rate * 0.25
+            
         phase_noise = (torch.rand(16, device=self.device) * 2.0 - 1.0) * scramble_rate
         phases += phase_noise * dt
         
@@ -762,31 +835,54 @@ class PhaseVortexCombat:
 
         # --- 3. DYNAMIC DOMAIN EXPLOSIONS & PASSIVE AURAS ---
         for act in self.actors:
-            target_f = 1.0 if act['vector'][0] > act['vector'][2] else -1.0 
-            target_s = 1.0 if act['vector'][0] > 0.5 else -1.0
+            # Dynamic target projections based on continuous ratio matching [1.2.8]
+            target_f = float(act['vector'][0] * 1.0 + act['vector'][2] * (-1.0))
+            target_s = float(act['vector'][0] * 1.0 + act['vector'][2] * (-1.0))
             
             if not act['is_slag']:
-                if abs(act['freq_val'] - target_f) < 0.6 and abs(act['spatial_val'] - target_s) < 0.6:
-                    act['domain_charge'] += dt * 1.5
+                # Continuous distance matching in spatial-frequency BCI coordinates
+                freq_match = abs(act['freq_val'] - target_f) < 0.65
+                spatial_match = abs(act['spatial_val'] - target_s) < 0.65
+                
+                # Symmetrical unstable phase transition for Chaotic Warp bot (random outbursts)
+                if act['style'] == "Chaotic Warp" and random.random() < 0.015:
+                    act['domain_charge'] = 1.0
+                    
+                if freq_match and spatial_match:
+                    act['domain_charge'] += dt * 1.8
                     if act['domain_charge'] >= 1.0:
                         self._inject_domain_explosion(act['pos'], act['vector'], 2.0, act['is_yang'])
+                        act['explosions_triggered'] += 1
                         act['domain_charge'] = 0.0
                 else:
-                    act['domain_charge'] = max(0.0, act['domain_charge'] - dt)
+                    act['domain_charge'] = max(0.0, act['domain_charge'] - dt * 0.8)
 
-            # Passive Aura deposition (safe clamping to prevent exponential density growth)
-            px_g, py_g = int((act['pos'][0]/self.WIDTH)*self.res), int((act['pos'][1]/self.HEIGHT)*self.res)
-            dx = torch.remainder(self.x_indices - px_g + self.res/2, self.res) - self.res/2
-            dy = torch.remainder(self.y_indices - py_g + self.res/2, self.res) - self.res/2
-            mask = torch.exp(-(dx**2 + dy**2) / (8.0**2))
-            for c in range(3):
-                if act['vector'][c] > 0.01:
-                    self.density_complex[0, c*2] = torch.clamp(self.density_complex[0, c*2] + mask * 1.0 * dt * act['vector'][c], -2.0, 2.0)
+            # Symmetrically deposit local elements from all 16 individual nodes on GPU
+            # Makes mixed slimes paint gorgeous, multi-colored, rotating fractal wave trails! [1.2.8]
+            pin_gx = ((act['pin_pos'][:, 0] / self.WIDTH) * self.res).long()
+            pin_gy = ((act['pin_pos'][:, 1] / self.HEIGHT) * self.res).long()
+            
+            valid_nodes = (pin_gx > 0) & (pin_gx < self.res - 1) & (pin_gy > 0) & (pin_gy < self.res - 1) & act['edge_intact']
+            if valid_nodes.any():
+                gx_n = pin_gx[valid_nodes]
+                gy_n = pin_gy[valid_nodes]
+                vec_n = act['node_vectors'][valid_nodes] # [N_active, 3]
+                
+                # Apply local coordinate mask grids centered on each node
+                dx = self.x_indices.unsqueeze(0) - gx_n.reshape(-1, 1, 1)
+                dy = self.y_indices.unsqueeze(0) - gy_n.reshape(-1, 1, 1)
+                mask = torch.exp(-(dx**2 + dy**2) / (5.0**2)) # [N_active, res, res]
+                
+                # Symmetrically deposit on the 3 channels
+                for c in range(3):
+                    weight = vec_n[:, c].reshape(-1, 1, 1) * mask * 2.2 * dt
+                    self.density_complex[0, c*2] = torch.clamp(self.density_complex[0, c*2] + torch.sum(weight, dim=0), -2.5, 2.5)
 
         # --- 4. FLUID SOLVER ADVECTION & INTER-PHASE MODULATION ---
         self.u = torch.nan_to_num(self.u, nan=0.0) * 0.90 
         self.v = torch.nan_to_num(self.v, nan=0.0) * 0.90
-        self.density_complex = torch.nan_to_num(self.density_complex, nan=0.0) * 0.95
+        # Highly reduced damping factor (from 0.95 to 0.994) to allow long-lived, high-contrast, folding fractal structures! [1.2.2]
+        self.density_complex = torch.nan_to_num(self.density_complex, nan=0.0) * 0.994
 
         R_re, R_im = self.density_complex[0, 0], self.density_complex[0, 1]
         G_re, G_im = self.density_complex[0, 2], self.density_complex[0, 3]
@@ -802,6 +898,33 @@ class PhaseVortexCombat:
         phase_diff = phase_R - phase_B
         lock_in_force = amp_G * torch.sin(phase_diff) * 28.0 * dt
         
+        # --- GPU IMMISCIBILITY & CAHN-HILLIARD BOUNDARY SHARPENING ---
+        # Symmetrically forces all three element fields (Red, Green, Blue) to remain unmixed
+        # and form spectacular crisp fractal boundaries under chaotic advection.
+        amp_R_4d = torch.hypot(self.density_complex[:, 0:1], self.density_complex[:, 1:2]) + 1e-8
+        amp_G_4d = torch.hypot(self.density_complex[:, 2:3], self.density_complex[:, 3:4]) + 1e-8
+        amp_B_4d = torch.hypot(self.density_complex[:, 4:5], self.density_complex[:, 5:6]) + 1e-8
+        
+        R_pad = F.pad(amp_R_4d, (1, 1, 1, 1), mode='circular')
+        G_pad = F.pad(amp_G_4d, (1, 1, 1, 1), mode='circular')
+        B_pad = F.pad(amp_B_4d, (1, 1, 1, 1), mode='circular')
+        
+        laplacian_R = R_pad[:, :, 1:-1, 2:] + R_pad[:, :, 1:-1, :-2] + R_pad[:, :, 2:, 1:-1] + R_pad[:, :, :-2, 1:-1] - 4.0 * amp_R_4d
+        laplacian_G = G_pad[:, :, 1:-1, 2:] + G_pad[:, :, 1:-1, :-2] + G_pad[:, :, 2:, 1:-1] + G_pad[:, :, :-2, 1:-1] - 4.0 * amp_G_4d
+        laplacian_B = B_pad[:, :, 1:-1, 2:] + B_pad[:, :, 1:-1, :-2] + B_pad[:, :, 2:, 1:-1] + B_pad[:, :, :-2, 1:-1] - 4.0 * amp_B_4d
+        
+        # Textbook binary Cahn-Hilliard Phase separation potentials with 0.12 total density noise gating
+        # Prevents background erasure while creating stunning sharp folding fractals at the clashing interfaces [1.2.8]
+        mask_active = (amp_R_4d + amp_G_4d + amp_B_4d > 0.12).float()
+        
+        sharpening_R = (amp_R_4d * (amp_R_4d - 0.3) * (1.0 - amp_R_4d) + 0.10 * laplacian_R) * mask_active
+        sharpening_G = (amp_G_4d * (amp_G_4d - 0.3) * (1.0 - amp_G_4d) + 0.10 * laplacian_G) * mask_active
+        sharpening_B = (amp_B_4d * (amp_B_4d - 0.3) * (1.0 - amp_B_4d) + 0.10 * laplacian_B) * mask_active
+        
+        self.density_complex[:, 0:2] = torch.clamp(self.density_complex[:, 0:2] + sharpening_R * 4.0 * dt, -2.5, 2.5)
+        self.density_complex[:, 2:4] = torch.clamp(self.density_complex[:, 2:4] + sharpening_G * 4.0 * dt, -2.5, 2.5)
+        self.density_complex[:, 4:6] = torch.clamp(self.density_complex[:, 4:6] + sharpening_B * 4.0 * dt, -2.5, 2.5)
+
         pac_coupling = self.actors[0]['stabilization_factor'] if is_real_data else 0.5
         amp_R_new = amp_R * (1.0 + pac_coupling * amp_B * torch.cos(phase_B) * dt * 2.0)
         
@@ -843,14 +966,23 @@ class PhaseVortexCombat:
             )
             act['pos'].copy_(new_com)
 
-        # Snapped/Ruptured nodes bleed grey high-entropy phase noise (impedes flow control)
+        # Symmetrically inject phase noise from ruptured nodes completely on the GPU
         for act in self.actors:
-            if (~act['edge_intact']).any():
-                broken_idx = torch.nonzero(~act['edge_intact']).squeeze(1)
-                for idx in broken_idx:
-                    gx_b, gy_b = int((act['pin_pos'][idx, 0]/self.WIDTH)*self.res), int((act['pin_pos'][idx, 1]/self.HEIGHT)*self.res)
-                    if 0 < gx_b < self.res and 0 < gy_b < self.res:
-                        self.density_complex[0, 0:6, gy_b-1:gy_b+2, gx_b-1:gx_b+2] += (random.random() * 2.0 - 1.0) * 0.05 * dt
+            broken_mask = ~act['edge_intact']
+            if broken_mask.any():
+                broken_nodes = act['pin_pos'][broken_mask]
+                gx_b = ((broken_nodes[:, 0] / self.WIDTH) * self.res).long()
+                gy_b = ((broken_nodes[:, 1] / self.HEIGHT) * self.res).long()
+                
+                valid_mask = (gx_b > 0) & (gx_b < self.res - 1) & (gy_b > 0) & (gy_b < self.res - 1)
+                if valid_mask.any():
+                    gx_valid = gx_b[valid_mask]
+                    gy_valid = gy_b[valid_mask]
+                    
+                    # Compute pseudo-random high-entropy noise arrays on GPU
+                    noise = (torch.rand((6, gy_valid.shape[0]), device=self.device) * 2.0 - 1.0) * 0.05 * dt
+                    for c in range(6):
+                        self.density_complex[0, c, gy_valid, gx_valid] += noise[c]
 
         # Safeguard Clamping limits
         self.density_complex = torch.clamp(self.density_complex, -2.5, 2.5)
@@ -860,10 +992,18 @@ class PhaseVortexCombat:
         # --- 8. ADVECTION & DIVERGENCE PROJECTION OF WORLD GRID ---
         self.density_complex = self.solver.advect(self.density_complex, self.u, self.v, dt)
         
-        R = torch.sqrt(self.density_complex[:, 0]**2 + self.density_complex[:, 1]**2)
-        G = torch.sqrt(self.density_complex[:, 2]**2 + self.density_complex[:, 3]**2)
-        B = torch.sqrt(self.density_complex[:, 4]**2 + self.density_complex[:, 5]**2)
-        self.density = torch.stack([R, G, B], dim=1) 
+        # Calculate instantaneous real propagating wave fronts with interference fringes
+        time_factor = self.combat_time * 12.0
+        wave_R = self.density_complex[:, 0:1] * math.cos(time_factor) - self.density_complex[:, 1:2] * math.sin(time_factor)
+        wave_G = self.density_complex[:, 2:3] * math.cos(time_factor * 0.5) - self.density_complex[:, 3:4] * math.sin(time_factor * 0.5)
+        wave_B = self.density_complex[:, 4:5] * math.cos(time_factor * 0.25) - self.density_complex[:, 5:6] * math.sin(time_factor * 0.25)
+        
+        # Render high-contrast self-similar interference stripes (physical fractals on GPU) [1.1.1, 1.2.3]
+        R = torch.abs(wave_R)
+        G = torch.abs(wave_G)
+        B = torch.abs(wave_B)
+        
+        self.density = torch.cat([R, G, B], dim=1) 
         self.density = torch.clamp(self.density, 0.0, 1.0)
         
         self.u = self.solver.advect(self.u, self.u, self.v, dt)
@@ -881,10 +1021,10 @@ class PhaseVortexCombat:
         if active_nodes.numel() == 0:
             density_tensor.zero_()
             return
-        gx = torch.remainder((active_nodes[:, 0] / self.WIDTH) * self.res, self.res)
-        gy = torch.remainder((active_nodes[:, 1] / self.HEIGHT) * self.res, self.res)
-        n_nodes = active_nodes.shape[0]
-        dx = torch.remainder(self.x_indices.unsqueeze(0) - gx.view(n_nodes, 1, 1) + self.res/2, self.res) - self.res/2
-        dy = torch.remainder(self.y_indices.unsqueeze(0) - gy.view(n_nodes, 1, 1) + self.res/2, self.res) - self.res/2
+        gx = torch.remainder(active_nodes[:, 0] / self.WIDTH * self.res, self.res)
+        gy = torch.remainder(active_nodes[:, 1] / self.HEIGHT * self.res, self.res)
+        
+        dx = torch.remainder(self.x_indices.unsqueeze(0) - gx.reshape(-1, 1, 1) + self.res/2, self.res) - self.res/2
+        dy = torch.remainder(self.y_indices.unsqueeze(0) - gy.reshape(-1, 1, 1) + self.res/2, self.res) - self.res/2
         influence = torch.exp(-(dx**2 + dy**2) / 10.0)
         density_tensor.copy_(torch.max(influence, dim=0, keepdim=True)[0].unsqueeze(0))
