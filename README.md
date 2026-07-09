@@ -7,6 +7,10 @@ This project operates on the **Mathematical Universe Hypothesis** and the philos
 *   **The Platonic World** (governed by mathematical truths, including the Navier-Stokes fluid fields, the Kuramoto Coupled Phase equations, and Feigenbaum's non-linear limits) processes these projections to organize the system.
 *   **The Physical World** (realized through the high-speed GPU render viewport and the 44100Hz spatialized procedural audio buffer) represents, displays, and sonifies these emergent, dissipative structures in real-time.
 
+[gamepad vs bot](https://drive.google.com/file/d/1iruVLrGPEa8bQdZrL-5MD4MuQo3FO1xa/view)
+
+[bot vs bot](https://drive.google.com/file/d/1zm8lGpOFRbi65zBRely4jKHQlue9Avv4/view)
+
 ---
 
 ## ⚡ ULTRA-HIGH-DENSITY MICROSCOPY: THE FreeEEG16-alpha2 HARDWARE
