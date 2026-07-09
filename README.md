@@ -21,7 +21,7 @@ This extreme density is equivalent to high-end scientific research grids (such a
 ### 🧮 The ciPLV Mathematical Mandate
 Because the electrodes are positioned mere millimeters apart, they are subject to extreme volume conduction. The electrical potentials propagating through the scalp and skull are subject to massive spatial low-pass filtering, causing different channels to record identical, instantaneous potential changes from the same underlying source.
 *   **Standard PLV Failure**: Using a standard Phase Locking Value (PLV) in this environment is mathematically invalid, as volume conduction creates false-positive zero-lag phase locking across the entire micro-array.
-*   **The ciPLV Solution**: The **Corrected Imaginary Phase Locking Value (ciPLV)** is physically and mathematically mandatory for this layout. By isolating only the imaginary part of the cross-spectrum and normalizing it against the real component, the engine completely discards zero-lag volume conduction, exposing the genuine, non-zero-lag synaptic phase-locking occurring between localized cortical columns.
+*   **The ciPLV Solution**: The **Corrected Imaginary Phase Locking Value (ciPLV)** is physically and mathematically mandatory for this layout [Bruña et al., 2018]. By isolating only the imaginary part of the cross-spectrum and normalizing it against the real component, the engine completely discards zero-lag volume conduction, exposing the genuine, non-zero-lag synaptic phase-locking occurring between localized cortical columns.
 
 ---
 
@@ -63,27 +63,64 @@ The world of QAR has suffered a *Decoherence Event*, shattering semantic reality
 QAR operates as a highly competitive *Neuro-Action Roguelite* consisting of three interconnected phases:
 
 ### Phase 1: The Labyrinth (Strategic Gacha & Draft)
-The stochastic maze generates a random set of raw, high-entropy *Cognits* (phase resonators) [vortex_maze.py]. Players must navigate and collect them [vortex_physics.py]. Because the spawn pool is random, players must adapt on the fly: if they fail to gather a balanced triad, they must prepare to smelt a highly volatile unbalanced core, requiring immense BCI mental compensation [vortex_physics.py].
+The stochastic maze generates a random set of raw, high-entropy *Cognits* (phase resonators) [vortex_maze.py]. Players must navigate and collect them [vortex_physics.py]. Because the spawn pool is random, players must adapt on the fly.
+*   **Bypassing the Maze (Debug Skip)**: Developers can enable `self.SKIP_TO_CAULDRON = True` in `vortex_physics.py` to spawn directly below the Cauldron with all three alchemical entities pre-collected, speeding up physical calibration of the smelting and arena modules.
 
 ### Phase 2: The Cauldron (Bifurcation Smelting)
 Ingredients dissolve into the $C^3$ complex-valued fluid [vortex_physics.py].
-*   **No Hardcoded Recipes**: The resulting pill's identity is evaluated using **cosine similarity** between the cauldron's integrated phase state and the semantic database (`SEMANTIC_PILLS_DB`) [vortex_physics.py].
-*   **The Bifurcation Sieve**: To forge a *Divine Core*, players must hold the system precisely at the Edge of Chaos [vortex_physics.py]. The cauldron then acts as a dissipative pump, recursively separating phase noise (scaling via Feigenbaum's $\delta = 4.669$) and blasting the high-entropy turbulence outward into the maze [vortex_physics.py].
+*   **Cross-Frequency Coupling**: Real-time non-linear interactions are solved inside `density_complex` to facilitate actual order generation. Qi (SMR/Green) acts as a Phase-Locking force pulling Yin and Yang into synchronization, while Yin (Theta) phase-modulates Yang (Gamma) amplitude (Phase-Amplitude Coupling).
+*   **The Bifurcation Sieve**: To forge a *Divine Core*, players must hold the system precisely at the Edge of Chaos. The cauldron then acts as a dissipative pump, recursively separating phase noise (scaling via Feigenbaum's $\delta = 4.669$) and blasting the high-entropy turbulence outward into the maze. Full circular padding prevents horizontal/vertical coordinate-axis locks.
 
-### Phase 3: The Arena (Domain Clash Endless Ladder)
-Upon passing the portal, the forged Pill's vector is propped up as your permanent resonant Core [vortex_physics.py]. You are teleported to a circular arena to face an endless ladder of Rogue Cultivators (Bots) whose difficulty scales infinitely [vortex_combat.py].
+### Phase 3: The Arena (Decentralized Domain Clash)
+The forged Pill's vector is propped up as your resonant Core [vortex_physics.py]. You are teleported to a circular arena to face an endless ladder of Rogue Cultivators in a fully symmetric multi-actor framework [vortex_combat.py].
 
-*   **Continuous Health (Kuramoto Order Parameter $H$)**: Binary HP is removed [vortex_combat.py]. Health is represented by **Phase Integrity** [vortex_combat.py, vortex_renderer.py]. External hostile waves scramble the phases of your 16 softbody nodes, driving $H \to 0$ [vortex_combat.py].
-*   **Visceral Structural Damage**: Your spring stiffness is proportional to your Phase Integrity ($k \propto H$) [vortex_combat.py]. As integrity drops, your slime turns soft and is physically stretched by fluid shear [vortex_combat.py]. When a spring exceeds its tensile limit, it **snaps permanently**, and the severed node bleeds phase noise into your own domain [vortex_combat.py].
-*   **Domain Rule Imposition**: The fluid is a battleground [vortex_combat.py]. In regions where your similarity exceeds the bot's ($S_p > S_b$), **you control the physical constants of the fluid** [vortex_combat.py]. If you are Yang, you accelerate whirlpools; if Yin, you freeze the fluid to paralyze the bot [vortex_combat.py].
-*   **Active Domain Pulsing**: By aligning your physical triggers with your core frequency, you charge and detonate Domain Shockwaves, physically blasting the opponent's nodes apart [vortex_combat.py].
+*   **Symmetric Actor Array**: Symmetrically simulates Player and Bot. Both run on 100% identical physical pipelines, states, and Kuramoto coupled networks.
+*   **Decentralized Node-Gradient Locomotion**: Body-wide translations are removed. Inputs are translated into local phase gradients along the 16 nodes. The softbody swims organically through viscous advection.
+*   **Cognitive Lens Damping**: Real-time cosine similarity between active EEG matrices and the Pill blueprint stabilizes the Kuramoto network.
 
 ---
 
 ## 🎮 THE ESPORTS INPUT BALANCE: GAMEPAD VS. 120-JET BCI
 
-*   **The Gamepad (Deterministic Precision)**: Uses trigger/bumper half-axes to morph the slime's shape (contracting into a stiff Core or expanding into a loose, receptive Shield) and shift frequencies manually [input_manager.py]. Gamepad inputs are highly responsive but constrained by discrete human motor limits (~150ms) [input_manager.py].
-*   **The BCI (Organic Dominance)**: Brain state transitions occur in 20-40ms. When using the headset, the **120 individual cross-coherence pairs** among the 16 nodes are mapped to dynamic fluid micro-jets [vortex_combat.py]. This creates an organic, fractal "buffer" shield around the EEG player, allowing them to absorb shear stress that would immediately shatter a rigid gamepad player [vortex_combat.py].
+*   **The Gamepad (Gamepad Neuro-Assist)**: Maps trigger buttons to soft-body physics. **Left Trigger (L2) compresses** the gel, while **Right Trigger (R2) expands** it. Analog movements use stable physical translation formulas.
+*   **The BCI (Organic Dominance)**: Real-time Multi-Frequency decomposition extracts Theta, SMR, and Gamma coherence matrices across the dense Pz micro-array. The player gains high-dimensional continuous control over all 16 boundary thrusters simultaneously.
+
+---
+
+## 🧪 AUTONOMOUS CHAMPIONSHIP TOURNAMENT TESTBED
+
+To calibrate and test the balanced interactions of the physics engine without manually playing through the smelting loop, QAR contains a dedicated visual simulation harness:
+
+```bash
+python championship_tournament.py
+```
+
+### 🎯 Objective & Predicted Transitive Matchups
+The testbed features **8 preconfigured Cultivator Archetypes** utilizing **4 distinct core types** in an intransitive Rock-Paper-Scissors-style relationship. Since the elements are indifferent to the core engine, this balance is achieved purely through the wave interactions defined in `combat_config.py`:
+
+*   **Yang / Fire (0)** beats **Yin / Water (2)**: High-frequency Gamma spikes boil away Yin's viscous protective fields.
+*   **Yin / Water (2)** beats **SMR Catalyst / Grass (1)**: Viscous damping and parry shields completely absorb Catalyst SMR sync.
+*   **SMR Catalyst / Grass (1)** beats **Yang / Fire (0)**: SMR's high phase-locking coupling ($K$) binds and absorbs Yang's chaotic thermal explosions.
+
+### 📈 Live Analytics & Telemetry Log
+During automated battles, the harness renders:
+*   **Win Prediction Bar**: Horizontal indicator demonstrating the real-time probability of victory calculated from the quadratic Phasic Integrity distribution ($P \propto \text{Integrity}^2$).
+*   **Tournament Logging (`tournament_history.log`)**: Appends end-of-round physical metadata (Integrity, Coupling constants, Dissonance, and spring limits) to track mathematical convergence.
+
+---
+
+## 📂 COMBAT CONFIGURATION SYSTEM (`combat_config.py`)
+
+All numerical values, modifiers, and damage scales have been isolated to `combat_config.py`. Developers can fine-tune these variables to match the empirical results of `championship_tournament.py` with their theoretical designs:
+
+```python
+PROXIMITY_DAMAGE_SCALE = 1.8      # Damage from direct physical overlaps
+DISRUPTION_FORCE_SCALE = 15.0     # Dissonance damage multiplier
+JITTER_FORCE_MAX_CLAMP = 14.0     # Max clamp to prevent spring-snapping loops
+ELONGATION_LIMIT_BASE  = 38.0     # Spring snapping distance limit
+SCRAMBLE_RATE_SCALE    = 1.8      # Phase scramble rate from aura mismatch
+K_BOT_ASSIST_BASE      = 25.0     # Base Kuramoto assist to stabilize bots
+```
 
 ---
 
@@ -105,8 +142,10 @@ During combat, the expanded red panel provides a comprehensive physical diagnost
 [ CONNECTOME SPECTROSCOPY (DIAG) ]
 ----------------------------------
 Your Core   : Deep Yin Core
-Rogue Core  : Turbulent Anomaly
-Coupling (K): 16.7 vs 14.2
+Rogue Core  : Turbulent Anomaly (Frost Weaver)
+Rogue Style : Defensive Yin
+Coupling (K): 46.7 vs 54.2
+Control Mode: FreeEEG16 Native
 - - - - - - - - - - - - - - - - - 
 Raw Axes    : [0.00, 0.00, -1.00, 0.00, 0.00, 0.00]
 Raw Btns    : [2, 5]

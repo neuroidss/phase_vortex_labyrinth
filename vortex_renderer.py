@@ -202,7 +202,7 @@ class VortexRenderer:
         p_integ = getattr(arena, 'player_integrity', 1.0)
         b_integ = getattr(arena, 'bot_integrity', 1.0)
 
-        coupling_str = f"Coupling (K): {arena.player_K_active:.1f} vs {arena.bot_K:.1f}"
+        coupling_str = f"Coupling (K): {arena.player_K_active:.1f} vs {arena.bot_K_active:.1f}"
 
         assist_active = getattr(arena, 'assist_mode_active', False)
         profile_name = getattr(arena, 'assist_profile', "FreeEEG16")
@@ -210,7 +210,8 @@ class VortexRenderer:
 
         metrics = [
             f"Your Core   : {arena.player_pill_name}",
-            f"Rogue Core  : {arena.bot_pill_name}",
+            f"Rogue Core  : {arena.bot_pill_name} ({getattr(arena, 'bot_custom_name', 'Unknown')})",
+            f"Rogue Style : {getattr(arena, 'bot_style', 'Standard')}",
             coupling_str,
             assist_label,
             "-" * 37,
@@ -471,32 +472,15 @@ class VortexRenderer:
             
             if self.alchemy_font is None: 
                 self.alchemy_font = pygame.font.SysFont("Consolas", 14, bold=True)
-            text = self.alchemy_font.render(icon, True, (255, 255, 255))
-            surface.blit(text, (ex - text.get_width()//2, ey - 22))
+            text_surf = self.alchemy_font.render(icon, True, (255, 255, 255))
+            surface.blit(text_surf, (ex - text_surf.get_width()//2, ey - 32))
 
-        if arena.smelting_progress > 0.0 and not arena.pill_created:
-            bar_w, bar_h = 300, 24
-            bx, by = self.WIDTH // 2 - bar_w // 2, self.HEIGHT - 80
-            pygame.draw.rect(surface, (40, 40, 40), (bx, by, bar_w, bar_h))
-            pygame.draw.rect(surface, (255, 180, 0), (bx, by, int(bar_w * arena.smelting_progress), bar_h))
-            pygame.draw.rect(surface, (255, 255, 255), (bx, by, bar_w, bar_h), 2)
-            
-            pump_active = arena.score_temp > 0.5 and (arena.score_resonance * arena.score_containment) > 0.5
-            status_text = "BIFURCATION PUMP ACTIVE" if pump_active else "ALIGNMENT REQUIRED..."
-            color = (0, 255, 100) if pump_active else (255, 100, 100)
-            
-            if self.alchemy_font is None:
-                self.alchemy_font = pygame.font.SysFont("Consolas", 14, bold=True)
-            shadow = self.alchemy_font.render(status_text, True, (0, 0, 0))
-            text_el = self.alchemy_font.render(status_text, True, color)
-            surface.blit(shadow, (bx + 2, by - 28))
-            surface.blit(text_el, (bx, by - 30))
-
-        elif arena.pill_created:
-            if self.alchemy_font is None:
-                self.alchemy_font = pygame.font.SysFont("Consolas", 14, bold=True)
-            text = self.alchemy_font.render(f"PILL FORGED: {arena.emergent_pill_name}", True, (255, 200, 0))
-            surface.blit(text, (self.WIDTH // 2 - text.get_width()//2, self.HEIGHT - 60))
+        # Check for successful Smelting and Portal Capture
+        if getattr(arena, 'pill_created', False):
+            # Draw Goal Portal Ring
+            gx, gy = project(arena.portal_pos[0].item(), arena.portal_pos[1].item())
+            portal_pulse = int(10 * math.sin(pygame.time.get_ticks() * 0.01))
+            pygame.draw.circle(surface, (255, 180, 0), (gx, gy), int(arena.cell_w * 0.6 / self.ZOOM) + portal_pulse, 2)
 
     def draw_ui(self, surface, arena):
         if hasattr(arena, 'bot_density'):

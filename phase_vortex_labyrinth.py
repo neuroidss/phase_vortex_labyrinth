@@ -8,6 +8,7 @@ import numpy as np
 import random
 import math
 from implicit_config import ALCHEMY_ENTITIES_CONFIG, SEMANTIC_PILLS_DB
+import combat_config
 
 try:
     from neuro_driver import RealNeuroDriver
@@ -194,13 +195,25 @@ def main():
         SCENE_LABYRINTH = 0
         SCENE_COMBAT = 1
         
-        current_scene = SCENE_LABYRINTH
         combat_difficulty = 1
         transition_timer = 0.0
         
-        arena_lab = PhaseVortexArena(device, WIDTH, HEIGHT, COMPUTE_RES, seed=TOURNAMENT_SEED)
-        arena_com = None
-        active_arena = arena_lab
+        # Symmetrical Boot check to launch directly in the Arena with customizable cores
+        if getattr(combat_config, 'DIRECT_ARENA_BOOT', False):
+            current_scene = SCENE_COMBAT
+            pill_data = {
+                'name': 'Foundation Pill',
+                'vector': [0.577, 0.577, 0.577],
+                'quality': 100.0
+            }
+            arena_com = PhaseVortexCombat(device, WIDTH, HEIGHT, COMPUTE_RES, pill_data, difficulty=combat_difficulty)
+            active_arena = arena_com
+            arena_lab = None
+        else:
+            current_scene = SCENE_LABYRINTH
+            arena_lab = PhaseVortexArena(device, WIDTH, HEIGHT, COMPUTE_RES, seed=TOURNAMENT_SEED)
+            active_arena = arena_lab
+            arena_com = None
         
         renderer = VortexRenderer(WIDTH, HEIGHT, ZOOM_OUT_FACTOR)
         audio_manager = AudioSonificationManager(sample_rate=44100)
@@ -251,8 +264,7 @@ def main():
                             samples = [q.popleft() for _ in range(q_len)]
                             K = len(samples)
                             if K >= 500:
-                                samples = samples[-500:]
-                                neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, :] = torch.tensor(samples, dtype=torch.float32).T
+                                self.buffers[slot_idx] = new_data[:, -500:]
                             else:
                                 neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, :-K] = neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, K:].clone()
                                 neuro_engine.pinned_cpu_buffer[slot_idx*16:(slot_idx+1)*16, -K:] = torch.tensor(samples, dtype=torch.float32).T
@@ -269,7 +281,7 @@ def main():
             if ui_compression > 0.0:
                 scale = 1.25 - ui_compression * 1.10
             else:
-                scale = 1.25 - ui_compression * 5.25
+                scale = 1.25 - ui_compression * 0.35
             
             # -----------------------------------------------------
             # STATE MACHINE LOGIC WITH CONTINUOUS TELEMETRY PASSTHROUGH
@@ -277,7 +289,7 @@ def main():
             if current_scene == SCENE_LABYRINTH:
                 arena_lab.step(dt, time_sec, eeg_c0_spectrum, eeg_vx, eeg_vy, eeg_tq, is_real_data, ui_compression, scale, eeg_freqs, alch_freq, alch_spatial)
                 
-                # Check for successful Smelting and Portal Capture
+                # Check for successful Smelting and Portal Capture (ALL 16 nodes must fully step inside)
                 if arena_lab.pill_created and arena_lab.pin_captured.all():
                     pill_data = {
                         'name': arena_lab.emergent_pill_name,
@@ -294,14 +306,14 @@ def main():
                     if transition_timer <= 0.0:
                         # Re-instance combat
                         pill_data = {
-                            'name': arena_lab.emergent_pill_name,
-                            'vector': SEMANTIC_PILLS_DB[arena_lab.emergent_pill_name]['vector'],
-                            'quality': arena_lab.pill_quality
+                            'name': active_arena.player_pill_name,
+                            'vector': active_arena.actors[0]['vector'].tolist(),
+                            'quality': active_arena.actors[0]['quality']
                         }
                         arena_com = PhaseVortexCombat(device, WIDTH, HEIGHT, COMPUTE_RES, pill_data, difficulty=combat_difficulty)
                         active_arena = arena_com
                 else:
-                    arena_com.step(dt, eeg_c0_spectrum, eeg_vx, eeg_vy, eeg_tq, alch_freq, alch_spatial, is_real_data)
+                    arena_com.step(dt, time_sec, eeg_c0_spectrum, eeg_vx, eeg_vy, eeg_tq, is_real_data, ui_compression, scale, eeg_freqs, alch_freq, alch_spatial)
                     if arena_com.winner is not None:
                         transition_timer = 2.5 
                         if arena_com.winner == "Player":

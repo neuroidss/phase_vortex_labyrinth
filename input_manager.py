@@ -66,18 +66,16 @@ class UnifiedInputManager:
                 ctrl_vx += jx if abs(jx) > 0.15 else 0.0
                 ctrl_vy += jy if abs(jy) > 0.15 else 0.0
             
-            # Right Analog Stick (Torque and Compression)
+            # Right Analog Stick (Torque logic on Horizontal axis)
             if num_axes >= 4:
                 jtq = joystick.get_axis(3)
-                jcomp = joystick.get_axis(4) 
                 ctrl_tq -= jtq if abs(jtq) > 0.15 else 0.0
-                ctrl_comp -= jcomp if abs(jcomp) > 0.15 else 0.0
             
-            # Triggers L2/R2 mapped to continuous spatial control (Core vs Shield)
+            # Triggers L2/R2 mapped to continuous soft-body compression and expansion (Unified)
             if num_axes >= 6:
                 r2_trigger = (joystick.get_axis(5) + 1.0) / 2.0 if abs(joystick.get_axis(5)) > 0.05 else 0.0
                 l2_trigger = (joystick.get_axis(2) + 1.0) / 2.0 if abs(joystick.get_axis(2)) > 0.05 else 0.0
-                ctrl_alch_spatial += (r2_trigger - l2_trigger)
+                ctrl_comp += (r2_trigger - l2_trigger)
 
             # Face Buttons A/Y and X/B
             if num_buttons >= 4:
