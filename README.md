@@ -23,94 +23,83 @@ $$\text{ciPLV}_{i,j}(f) = \frac{\text{Im}(\langle e^{-i(\phi_i(f,t) - \phi_j(f,t
 
 ---
 
-## 📐 THE 120-JET CROSS-COHERENCE MANIFOLD (NO SINGLE-POINT REDUCTION)
+## 🎮 THE EMBEDDED BCI PARADIGM & "CRAFT" NEURAL DYNAMICS
 
-To preserve the biological integrity of the viscoelastic simulation, **it is strictly forbidden to approximate slimes or characters as single geometric points (centers of mass) or simple disjoint nodes.** 
+Quantum Alchemy Reactor does not position its BCI support as a forced gimmick. Instead, it is treated as an embedded, hidden tier of play—a deep control interface seamlessly integrated alongside standard gamepads, keyboards, and mice.
 
-*   **120-Pairwise Manifold**: A 16-channel electrode micro-array yields exactly $\frac{16 \times 15}{2} = 120$ unique pairwise cross-coherence relationships.
-*   **No Single-Point Approximations**: Resolving active-matter dynamics through single coordinates is prohibited. The simulation maps the complete, unreduced 120-dimensional spectro-spatial manifold—where each electrode pair possesses its own individual frequency spectrum of coherence—directly onto the Navier-Stokes velocity and density fields as 120 discrete physical "jets" of momentum.
-*   **Preventing Internal Shear Stress**: Uniform projection across the entire 120-jet manifold ensures realistic, numerically stable solid-body translation and organic boundary interactions, preventing artificial local velocity gradients (`shear_stress`) from causing numerical self-destruction.
+### 🧠 Motor Learning & Biological Adaptability
+The engine treats BCI control as a pure motor-learning loop. Just as an infant's brain slowly learns to navigate a physical body by mapping motor commands to physical outcomes, a player's brain in QAR learns to steer the 100-channel physical spectrum. By mapping spatial-coherence gradients (such as the sensorimotor 18-36Hz Beta/SMR bands), the player develops direct, subconscious control over the fluid currents.
 
----
-
-## 📐 THE STRICT LOCALITY MANDATE (NO ACTION-AT-A-DISTANCE)
-
-To conform with continuous field physics, **all remote interactions are strictly localized.** The system completely rejects non-local operations such as instant teleportation, direct health/integrity injections across the grid, or direct coordinate pulling forces between remote units. All forces, healing properties, and stabilization parameters must propagate strictly via local fluid flow convection and node-to-grid field sampling.
-
-*   **Advected Healing Mist (Resonance Plume)**: Healers generate a highly concentrated local Theta/Gamma spectral plume directly around their active nodes, introducing a gentle outward convective flow to disperse it. This mist is completely advected by the Navier-Stokes fluid currents across the grid. Friendly units must physically align and push the fluid flow to direct this healing mist over damaged frontline units to trigger their autopoietic regeneration.
-*   **Physical Gravitational Vortices**: Tanks generate a localized low-pressure gravitational sinkhole centered at their coordinates on the GPU. This physically pulls nearby units and advects fluid density inward using a swirling spiral vortex, avoiding any non-physical coordinate-based teleportation.
+### 🎨 The "Craft" (Крафтовое) Input Philosophy
+While the built-in AI autopilot performs with clinical, algorithmic optimization, manual BCI input is designed to yield something fundamentally different: **Craft/Custom (Крафтовое) control**. 
+*   **The AI** moves along optimized, shortest-path vectors.
+*   **The Human Subconscious** generates complex, non-equilibrium wave contours, custom orbital flows, and organic maneuvers.
+It is an expressive, non-linear art form. Manual control enables highly customized physical interventions on the battlefield that are completely un-replicable by standard state machines.
 
 ---
 
-## 🌊 VISCOELASTIC METAMATERIALS & NEGENTROPIC FRACTALS
+## 🌀 PHYSICALIZED GACHA: LABYRINTH RUNS & JINDAN SMELTING
 
-QAR processes the complete spectro-spatial manifold natively. Instead of hardcoded triggers (`if frequency == 80: shoot()`), the engine features a completely emergent, multi-phase continuous Navier-Stokes solver. 
+In QAR, pulling a new character (Gacha) is not a static menu click. It is physically manifested as an active labyrinth run:
+1.  **Exploration & Collection**: The player (or the AI on autopilot) must steer through a procedural, python-generated maze to seek out localized elemental essences (Yin, Yang, Catalyst).
+2.  **Transportation**: Once gathered, these active-matter entities must be physically hauled through the corridors to the central Cauldron.
+3.  **The Cauldron Melting Phase**: At the Cauldron, the player must manually melt and fuse these elements into a **Jindan Core (character soul)**. 
 
-### A. Non-Newtonian Viscoelasticity (Theta / 4–8 Hz)
-Theta band coherence acts as a structural binding agent. Where Theta is highly concentrated, the fluid on the GPU instantly transitions into a highly viscous, non-Newtonian gel [2]. This provides dynamic, physical energy shielding—protecting the Slime against high-frequency shocks and tearing.
-
-### B. Bulk Thrust (Beta / 18–36 Hz) 
-Phase-locking in the motor planning bands generates longer wavelengths that align with the 26mm Slime scale [2]. These large-scale phase gradients ($\nabla\Phi$) drive continuous **Madelung Quantum Currents**, acting as physical propellers that push the fluid and propel the slime ring via laminar advection.
-
-### C. Negentropic Fractal Waveguides & CFC (Gamma / 60–100 Hz)
-In standard fluid dynamics, violent mixing leads to chaotic entropy (heat). However, the simulated cortical fluid is an *active medium*. 
-When a fast **Beta current** slams into a dense **Theta shield**, the boundary sharply folds, reducing entropy. This **Negentropic Fractal Boundary** acts as an acoustic lens: the kinetic energy is mechanically compressed until it undergoes **Cross-Frequency Conversion (CFC)**, detonating into a high-frequency **Gamma Soliton** (projectile) that rips through the field to deal cavitation damage [2].
-
----
-
-## 🌀 TOPOLOGICAL CONTAINMENT & PHASIC RECOVERY (CLASSES & ROLES)
-
-QAR translates the continuous physical wave-fluid model into a strategic **Managerial Gacha Auto-Battler** where human players and AI bots share the exact same physical constraints.
-
-*   **Vanguard (Tank - High Theta):** Focuses on low-frequency Theta waves. It generates dense, highly viscous fluid fields that absorb kinetic shockwaves and physically slow down incoming attacks, blocking the enemy frontline.
-*   **Assault (Fighter - High Beta):** Focuses on the Beta band. Generates rapid, laminar currents to rush the enemy frontline and deliver close-range kinetic advection.
-*   **Artillery (Mage - High Gamma):** Focuses on high-frequency Gamma waves. Launches stable solitons that fly across the field and detonate upon hitting the enemy, causing phase-decoherence in the target's Kuramoto springs.
-*   **Support (Healer - Phase-Lock Recovery):** Emits a highly cohesive Theta-band field. When overlapping with allies, its field physically **boosts their Kuramoto coupling constant $K$**, pulling their scattered phases back into alignment.
+### 🧪 The Challenge of Manual Smelting
+While the AI can auto-synthesize this process with standard success rates, manual smelting using a neurogamepad represents the ultimate alchemical challenge. The player must physically balance:
+*   **Thermal Limits**: Regulating the Cauldron's temperature through active torque and phase velocity.
+*   **Kuramoto Phase Stabilization**: Keeping the scattered phases of the elemental cores from breaking their elastic springs.
+Successfully completed manual runs yield custom, highly stable "Craft" characters with unique, non-standard spectral baselines.
 
 ---
 
-## 🎮 THE CONTINUOUS SPECTRUM BUILD GUIDE (TACTICAL SQUAD ASSEMBLY)
+## 🌊 TEAM-BLIND UNIFIED PHYSICS & THE HEALER'S PARADOX
 
-To prevent self-destruction and support advanced playstyles, every slime's internal coordinate framework is initialized with a **fully continuous power spectral density** ($1/f$ pink noise background floor) across all 100 frequency bins. This guarantees there are no absolute "zero-defense" holes in their physical node structures, allowing non-Tank units to withstand local fluid velocity gradients.
+To maintain absolute physical realism, the engine strictly enforces the **Prohibition of Fractional Physics**: there is only **one team-blind Navier-Stokes fluid field** evaluated on the GPU. The fluid possesses no knowledge of "allies" versus "enemies."
 
-### 🧬 Class Spectral Distributions (Baseline $1/f$ + Oscillatory Peaks)
-*   **Tank (Vanguard):** 
-    *   *Theta (4-8Hz)*: **Heavy Cohesion** (`4.5` multiplier) distributed uniformly over all 16 nodes to absorb massive physical shear rates and protect the frontline.
-    *   *Beta (18-36Hz)*: Moderate (`1.5`) for structural advection thrust.
-    *   *Gamma (60-100Hz)*: Low (`0.3`).
-*   **Fighter (Assault):** 
-    *   *Beta (18-36Hz)*: **Heavy Propulsion** (`3.5` to `4.0` multiplier) to generate high-speed laminar currents.
-    *   *Theta (4-8Hz)*: Moderate (`1.2` to `1.8`) to protect internal springs during rapid dashes.
-    *   *Gamma (60-100Hz)*: Low-moderate (`0.5`).
-*   **Mage (Artillery):** 
-    *   *Gamma (60-100Hz)*: **Extreme Solitons** (`4.0` to `4.5` multiplier) to fire high-density ranged projectiles.
-    *   *Theta (4-8Hz)*: Moderate (`1.5` to `1.8`) to shield front nodes from the shear rates generated by its own projectile launch.
-    *   *Beta (18-36Hz)*: Low-moderate (`0.8`).
-*   **Healer (Support):** 
-    *   *Theta (4-8Hz)*: **Enhanced Coherence** (`3.0` multiplier) to generate stabilization sanctuaries.
-    *   *Beta / Gamma*: Balanced (`1.2` to `1.5`) for flexible support dynamics.
+This design constraint introduces a profound mechanical challenge for the **Support (Healer)** class: *How can a healer restore its team without simultaneously healing adjacent enemy units?*
 
-### ⚡ Ultimate (Ult) Physical Grid Mechanics
-When a slime's `'ult_charge'` reaches `1.0` (charged passively and dynamically by receiving or dealing shear-rate damage), it activates its Ultimate:
-*   **Mage — "SUPERNOVA SOLITON":** Casts a massive, high-density Gamma soliton wave packet that travels across the Navier-Stokes grid, leaving a glowing trail, and detonates in a giant multi-directional fluid explosion on impact.
-*   **Fighter — "HYPER-DRIVE BLITZ":** Gains 200% movement speed for 3.0 seconds, continuously ejecting high-velocity Beta thrust behind its nodes.
-*   **Tank — "THETA CONFINEMENT":** Creates a gravitational sinkhole at its position for 3.0 seconds, physically pulling and dragging all enemy nodes into its viscous center.
-*   **Healer — "RESONANCE SANCTUARY":** Instantly repairs 50% integrity of all alive allies and fully restores all their broken Kuramoto springs across the entire playfield.
+```
+                     [ Healer Node ]
+                           │
+             ( Emits High-Coherence Theta Plume )
+                           │
+                           ▼
+                 [ Healing Mist Plume ]
+                     /           \
+         (Steer Flow)             (Steer Flow)
+             /                             \
+     ▼                                     ▼
+[Friendly Frontline]                [Hostile Vanguard]
+ (Absorbs Mist)                     (Avoids Contact!)
+```
+
+### 💨 Targeted Advective Plumes
+Because healing properties must propagate locally through the fluid, Healers cannot inject health instantaneously at a distance. Instead:
+*   They emit highly concentrated **healing mist plumes** (pockets of dense, stable Theta-band resonance) directly around their active nodes.
+*   To prevent this mist from drifting into hostile contact and healing the enemy, players must use **directional fluid advection**. By steering laminar currents and generating micro-vortices, they must physically push, drag, and shape the flow of the healing mist so that it wraps around friendly units while keeping it away from the enemy frontlines.
 
 ---
 
-## 📈 THE SUN TZU OPTION-BASED PREDICTOR
+## 📐 THE SPECTRAL FREQUENCY CONTINUUM
 
-To support deep tactical play, the engine integrates a real-time **Option-on-Future Win Probability Predictor** modeled after financial option pricing theory (Black-Scholes-like probability decay).
+To mimic the continuous nature of human brain waves, the elements in QAR are not treated as binary, discrete variables. Instead, they exist along a **continuous 100-channel spectral pipeline** ($1/f$ pink noise floor):
 
-$$d = \frac{S + \mu \cdot \tau}{\sigma \sqrt{\tau} + 1\text{e-}5}$$
-$$P = \Phi(d) \approx \frac{1}{1 + e^{-1.5 \cdot d}}$$
+*   **Yin (Water / Theta 4-8Hz)**: High cohesion and viscosity. It transitions the Navier-Stokes grid into a viscoelastic gel, forming defensive physical armor shields.
+*   **Qi (Catalyst / Beta 18-36Hz)**: Medium-wavelength kinetic thrust. It generates Madelung quantum currents that act as physical propellers to drive laminar advection.
+*   **Yang (Fire / Gamma 60-100Hz)**: High-frequency cavitation. It represents active, high-entropy information packets that detonate across the grid.
 
-*   **Spot Price ($S$):** The difference between the normalized structural integrity of the two teams: $S = Integrity_{T0} - Integrity_{T1}$.
-*   **Time to Expiration ($\tau$):** The remaining duration of the combat contract (decaying towards the 30.0s time limit).
-*   **Expected Drift ($\mu$):** The advantage score calculated from the spectral matchup. If Team 0's offensive Gamma penetrates Team 1's defensive Theta, the drift $\mu$ is positive.
-*   **Volatility ($\sigma$):** The spatial phase-noise and shear rate of the fluid on the arena. Higher turbulence increases volatility, pulling the win probability $P$ towards $50\%$.
-*   **Theta Decay:** As time to expiration ($\tau \to 0$) decreases, the uncertainty converges, forcing the Win Probability ($P$) to resolve decisively towards $100\%$ or $0\%$. Real-time metrics are exported to `battle_prediction_log.csv` for downstream model calibration.
+Because the BCI micro-array registers a continuous spectrum of coherence, the brain can continuously "blend" these elements, creating custom hybrid states (such as a highly viscous, self-propelling kinetic gel).
+
+---
+
+## ⚔️ THE MAGE'S MAGICAL PROJECTILES (PHYSICALIZED CAVITATION)
+
+Mage (Artillery) attacks represent the ultimate fusion of magic and fluid physics. Rather than utilizing hardcoded damage triggers, the Mage's magical projectiles (**Topological Solitons**) are generated as true physical phenomena:
+
+1.  **The Collision Interface**: When a player directs high-velocity **Beta currents** (propulsion) into a dense wall of **Theta-gel** (cohesion), the boundary sharply folds.
+2.  **Cross-Frequency Conversion (CFC)**: The kinetic energy of the collision is compressed at the interface.
+3.  **Soliton Launch**: This compressed energy undergoes cross-frequency conversion, creating a high-density, non-dispersive **Gamma Soliton** that detonates directly on the GPU, tearing through enemy nodes via physical cavitation.
 
 ---
 
@@ -120,19 +109,12 @@ Every mechanic in the QAR engine is derived from established computational neuro
 
 1.  **Corrected Imaginary Phase Locking Value (ciPLV)**: Used in the BCI spatial mapping to isolate true neocortical phase synchronization and eliminate volume conduction artifacts.
     > *Bruña, R., Maestú, F., & Pereda, E. (2018). Phase locking value revisited: teaching new tricks to an old dog. Journal of Neural Engineering.* **[DOI: 10.1088/1741-2552/aacfe4]**
-2.  **Working Memory 2.0 (Phase Rhythms)**: The push-pull mechanics of superficial (Gamma) and deep (Alpha/Beta/Theta) cortical layers during volitional focus dictate the game's spectral control axes.
+2.  **Working Memory 2.0 (Phase Rhythms)**: The push-pull mechanics of superficial (Gamma) and deep (Alpha/Beta/Theta) cortical layers during volitional focus dictate the game's spectral control axes [2].
     > *Miller, E. K., Lundqvist, M., & Bastos, A. M. (2018). Working Memory 2.0. Neuron.* **[DOI: 10.1016/j.neuron.2018.09.023]**
 3.  **The Kuramoto Model (Connectome Coherence)**: Slime structural health is modeled as a network of coupled phase oscillators.
     > *Kuramoto, Y. (1984). Chemical Oscillations, Waves, and Turbulence. Springer.* **[DOI: 10.1007/978-3-642-69689-3]**
 
 ---
 
-## 🛠 REAL-TIME DIAGNOSTIC TELEMETRY
-
-QAR features a comprehensive, hardware-facing diagnostic HUD panel designed to verify connection parameters and data integrity during live test trials:
-*   **EEG SPS Indicator:** Actively monitors the raw packet ingestion rate from all connected BLE/LSL workers.
-*   **Exocortex Spectroscopy Panel:** Displays live mathematical readings, including node-level dissonance, coupling ($K$), and shear stress.
-*   **Polar Phase Radar:** A real-time vector display mapping the 16 Kuramoto node oscillators as they rotate and disperse along the unit circle.
-
----
 *Engineered for cognitive connectome mapping and competitive BCI Esports. AGPL v3 licensed.*
+
