@@ -9,10 +9,6 @@ This project operates on the **Mathematical Universe Hypothesis** and the philos
 
 [three mages squad](https://drive.google.com/file/d/1YitlAWQluLQlMS34IE_sG5r6UKg3E3ov/view)
 
-[gamepad vs bot](https://drive.google.com/file/d/1iruVLrGPEa8bQdZrL-5MD4MuQo3FO1xa/view)
-
-[bot vs bot](https://drive.google.com/file/d/1zm8lGpOFRbi65zBRely4jKHQlue9Avv4/view)
-
 ---
 
 ## ⚡ THE HOLOGRAPHIC 26mm INTERFACE (FreeEEG16-alpha2)
