@@ -40,16 +40,13 @@ def load_profile():
             print(f"[WARNING] Error reading profile: {e}. Restoring defaults.")
             p = defaults
 
-    # Sanitize and heal missing fields
     for k, v in defaults.items():
         if k not in p:
             p[k] = v
     
-    # Heal inventory structure
     if not isinstance(p["inventory"], list):
         p["inventory"] = defaults["inventory"]
     
-    # Clean up inventory duplicates or malformed entries
     valid_ids = set()
     clean_inventory = []
     for item in p["inventory"]:
@@ -61,23 +58,19 @@ def load_profile():
             clean_inventory.append(item)
     p["inventory"] = clean_inventory
 
-    # Heal squad_ids
     if not isinstance(p["squad_ids"], list):
         p["squad_ids"] = [None, None, None]
     while len(p["squad_ids"]) < 3:
         p["squad_ids"].append(None)
     p["squad_ids"] = p["squad_ids"][:3]
     
-    # Clear slots for non-existent IDs
     p["squad_ids"] = [sid if (sid in valid_ids) else None for sid in p["squad_ids"]]
     
-    # Heal currency
     if not isinstance(p["currency"], (int, float)):
         p["currency"] = 5000
     else:
         p["currency"] = int(p["currency"])
 
-    # Heal campaign level
     if not isinstance(p["campaign_level"], int):
         p["campaign_level"] = 1
         
@@ -149,10 +142,6 @@ def get_enemy_squad_for_level(lvl):
     return enemies
 
 def calculate_prebattle_wp(team0_data, team1_data):
-    """
-    Evaluates team vectors and returns a predictive win probability (0-100%).
-    Takes into account Spectral SMR (Advection), Theta (Armor) and Gamma (Solitons).
-    """
     if not team0_data or not team1_data:
         return 50.0
         
@@ -180,7 +169,6 @@ def calculate_prebattle_wp(team0_data, team1_data):
     
     advantage = ttk_t0 - ttk_t1 
     
-    # Clip exponents strictly to prevent Math Range Overflow errors
     exponent = -advantage * 0.8
     exponent_clipped = max(-700.0, min(700.0, exponent))
     
@@ -205,6 +193,7 @@ def main():
     
     profile = load_profile()
     state = "HUB"
+    inv_scroll_y = 0  # Смещение инвентаря
     
     arena = None
     renderer = None
@@ -215,6 +204,10 @@ def main():
     
     emerg_pill_name = "Foundation Pill"
     emerg_quality = 100.0
+    
+    # Принудительно освобождаем мышь для начального меню HUB
+    pygame.mouse.set_visible(True)
+    pygame.event.set_grab(False)
 
     def draw_button(surface, text, rect, color=(50,50,80), text_col=(255,255,255)):
         mx, my = pygame.mouse.get_pos()
@@ -269,8 +262,20 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT: running = False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1: clicked = True
+            
+            # Обработка скролла в HUB
+            if event.type == pygame.MOUSEWHEEL and state == "HUB":
+                inv_scroll_y += event.y * 40
+                max_scroll = min(0, HEIGHT - 150 - len(profile["inventory"]) * 64)
+                if max_scroll > 0: max_scroll = 0
+                inv_scroll_y = max(max_scroll, min(0, inv_scroll_y))
 
         if state == "HUB":
+            # Убеждаемся, что курсор виден в HUB
+            if not pygame.mouse.get_visible():
+                pygame.mouse.set_visible(True)
+                pygame.event.set_grab(False)
+                
             screen.fill((10, 12, 18))
             
             header = font_large.render(f"ALCHEMY CAULDRON HUB  |  Quantum Prisms: {profile['currency']}", True, (0, 255, 200))
@@ -279,7 +284,11 @@ def main():
             inv_title = font_med.render("Unlocked Cultivators (Equip, Level Up, 100% Refund):", True, (255, 255, 255))
             screen.blit(inv_title, (20, 70))
             
-            y_off = 100
+            y_off = 100 + inv_scroll_y
+            
+            # Клиппинг, чтобы инвентарь не вылезал на верхние надписи
+            screen.set_clip(pygame.Rect(0, 95, 770, HEIGHT - 95))
+            
             for u in profile["inventory"]:
                 udata = get_unit_data(u)
                 in_squad = u["id"] in profile["squad_ids"]
@@ -292,6 +301,15 @@ def main():
                 screen.blit(t1, (30, y_off + 8))
                 t2 = font_small.render(udata['desc'], True, (150, 150, 150))
                 screen.blit(t2, (30, y_off + 32))
+                
+                # Кнопка SELL (Продажа и полное удаление, если не в отряде)
+                sell_rect = pygame.Rect(355, y_off + 10, 75, 36)
+                if draw_button(screen, "SELL", sell_rect, (140, 40, 40) if not in_squad else (60, 40, 40)):
+                    if clicked and not in_squad:
+                        profile["currency"] += u["exp_invested"] + 50
+                        profile["inventory"].remove(u)
+                        save_profile(profile)
+                        break # Выходим из цикла, т.к. список изменился
                 
                 eq_rect = pygame.Rect(440, y_off + 10, 85, 36)
                 if draw_button(screen, "UNEQUIP" if in_squad else "EQUIP", eq_rect, (80,20,20) if in_squad else (20,20,80)):
@@ -323,6 +341,8 @@ def main():
 
                 y_off += 64
 
+            screen.set_clip(None) # Убираем клиппинг для боковой панели
+
             sidebar_x = 780
             pygame.draw.line(screen, (80, 80, 100), (sidebar_x, 0), (sidebar_x, HEIGHT), 2)
             
@@ -341,6 +361,8 @@ def main():
                     combat_timer = 0.0
                     transition_timer = 0.0
                     state = "SMELTING"
+                    pygame.mouse.set_visible(False)
+                    pygame.event.set_grab(True)
                 
             stage_lvl = profile["campaign_level"]
             is_boss_stage = (stage_lvl % 10 == 0)
@@ -352,7 +374,6 @@ def main():
             stage_text = font_large.render(f"STAGE {stage_lvl} {stage_tag}", True, stage_title_color)
             screen.blit(stage_text, (sidebar_x + 20, 145))
             
-            # --- RENDER PRE-BATTLE SUN TZU FORECAST AND FORCE COMPARISON ---
             team0_raw = []
             for uid in profile["squad_ids"]:
                 if uid:
@@ -388,6 +409,8 @@ def main():
                         combat_timer = 0.0
                         transition_timer = 0.0
                         state = "COMBAT"
+                        pygame.mouse.set_visible(False)
+                        pygame.event.set_grab(True)
 
             sq_title = font_med.render("Deployed Squad (Max 3):", True, (255, 255, 255))
             screen.blit(sq_title, (sidebar_x + 20, 290))
@@ -434,6 +457,8 @@ def main():
                 transition_timer -= dt
                 if transition_timer <= 0.0:
                     state = "HUB"
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
                     
             screen.fill((0,0,0))
             surf = renderer.render_field(arena)
@@ -470,7 +495,6 @@ def main():
             wp_height = int(arena.predicted_wp * 148.0)
             pygame.draw.rect(screen, (0, 150, 100) if arena.predicted_wp > 0.5 else (150, 50, 50), (sidebar_x + 22, graph_y + 149 - wp_height, 276, wp_height))
             
-            # --- RENDER LIVE TACTICAL COMBAT FEED ON THE SIDEBAR ---
             feed_y = 370
             pygame.draw.rect(screen, (20, 20, 30), (sidebar_x + 20, feed_y, 280, 180))
             pygame.draw.rect(screen, (0, 255, 200), (sidebar_x + 20, feed_y, 280, 180), 1)
@@ -504,6 +528,8 @@ def main():
                 transition_timer -= dt
                 if transition_timer <= 0.0:
                     state = "HUB"
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
 
             screen.fill((0,0,0))
             surf = renderer.render_field(arena)
@@ -518,6 +544,8 @@ def main():
                 if clicked:
                     mint_custom_pill(random.choice(["Foundation Pill", "Pure Yang Core", "Deep Yin Core", "Turbulent Anomaly"]), random.uniform(50.0, 95.0))
                     state = "HUB"
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
                     
             pygame.display.flip()
 

@@ -108,6 +108,43 @@ class VortexRenderer:
                             col_f = min(1.0, speed / 40.0)
                             pygame.draw.line(surface, (0, int(150 + col_f * 105), int(255 - col_f * 100)), (int(sx), int(sy)), (int(ex), int(ey)), 1)
 
+    def draw_soliton_telemetry(self, surface, arena):
+        """ Рендерит неоновые видоискатели и данные над летящими солитонами Шрёдингера """
+        if not hasattr(arena, 'tracked_solitons') or not arena.tracked_solitons: return
+        if self.debug_font is None: self.debug_font = pygame.font.SysFont("Consolas", 11, bold=True)
+        
+        if hasattr(arena, 'maze'):
+            theta = -arena.player_angle
+            cx, cy = arena.player_pos[0].item(), arena.player_pos[1].item()
+        else:
+            theta = 0.0
+            cx, cy = self.WIDTH / 2.0, self.HEIGHT / 2.0
+
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
+        
+        for sol in arena.tracked_solitons:
+            px, py = sol['pos'][0], sol['pos'][1]
+            sx = self.WIDTH / 2.0 + ((px - cx) * cos_t + (py - cy) * sin_t) / self.ZOOM
+            sy = self.HEIGHT / 2.0 + (-(px - cx) * sin_t + (py - cy) * cos_t) / self.ZOOM
+            
+            if 0 <= sx <= self.WIDTH and 0 <= sy <= self.HEIGHT:
+                # Рисуем неоновый фиолетовый прицел захвата солитона
+                rad = int(22 / self.ZOOM)
+                color = (230, 80, 255) # Неоновый фиолетовый
+                pygame.draw.circle(surface, color, (int(sx), int(sy)), rad, 1)
+                pygame.draw.circle(surface, color, (int(sx), int(sy)), 3)
+                
+                # Тонкие перекрестия видоискателя
+                pygame.draw.line(surface, color, (int(sx - rad - 6), int(sy)), (int(sx - rad + 3), int(sy)), 1)
+                pygame.draw.line(surface, color, (int(sx + rad - 3), int(sy)), (int(sx + rad + 6), int(sy)), 1)
+                pygame.draw.line(surface, color, (int(sx), int(sy - rad - 6)), (int(sx), int(sy - rad + 3)), 1)
+                pygame.draw.line(surface, color, (int(sx), int(sy + rad - 3)), (int(sx), int(sy + rad + 6)), 1)
+                
+                # Спектроскопическая инфо-строка
+                stat_str = f"SOLITON [Amp:{sol['amp']:.1f} | Vel:{sol['speed']:.0f} | Coh:{sol['stability']:.0f}%]"
+                text_surf = self.debug_font.render(stat_str, True, (255, 180, 255))
+                surface.blit(text_surf, (int(sx - text_surf.get_width()//2), int(sy + rad + 6)))
+
     def draw_electrode_sensors(self, surface, arena):
         if hasattr(arena, 'maze'):
             theta = -arena.player_angle
@@ -131,12 +168,10 @@ class VortexRenderer:
             color = (0, 255, 255) if act['team'] == 0 else (255, 100, 50)
             alpha_col = (color[0], color[1], color[2], 100)
             
-            # --- ВЫВОД ИНДИКАТОРА ЖИЗНИ И ФАЗЫ НАД КАЖДЫМ СЛАЙМОМ ---
             px, py = act['pos'][0].item(), act['pos'][1].item()
             sx_c = self.WIDTH / 2.0 + ((px - cx) * cos_t + (py - cy) * sin_t) / self.ZOOM
             sy_c = self.HEIGHT / 2.0 + (-(px - cx) * sin_t + (py - cy) * cos_t) / self.ZOOM
             
-            # Рендерим маленькую полоску здоровья над слаймом
             bar_w = 40
             bar_h = 4
             bx = int(sx_c - bar_w/2)
@@ -147,27 +182,22 @@ class VortexRenderer:
                 health_w = int(bar_w * act['integrity'])
                 pygame.draw.rect(surface, (0, 255, 150) if act['team'] == 0 else (255, 100, 100), (bx, by, health_w, bar_h))
                 
-                # Расчет текущей когерентности слайма для текста
                 cos_sum = torch.cos(act['node_phases']).mean()
                 sin_sum = torch.sin(act['node_phases']).mean()
                 inst_coh = math.hypot(cos_sum.item(), sin_sum.item())
                 
-                # Имя, Когерентность и ТАКТИЧЕСКИЙ СТАТУС ИИ
                 ai_state = act.get('ai_state_desc', 'FIGHTING')
                 name_str = f"{act['custom_name'][:4]} [{ai_state}] ({inst_coh*100:.0f}%)"
                 text_surf = self.debug_font.render(name_str, True, (255, 255, 255))
                 surface.blit(text_surf, (int(sx_c - text_surf.get_width()/2), by - 14))
 
-                # --- ОТРИСОВКА ЛУЧА НАВЕДЕНИЯ/ТАРГЕТИНГА ИИ ---
                 if 'target_pos' in act and act['target_pos'] is not None:
                     tx, ty = act['target_pos'][0].item(), act['target_pos'][1].item()
                     tsx = self.WIDTH / 2.0 + ((tx - cx) * cos_t + (ty - cy) * sin_t) / self.ZOOM
                     tsy = self.HEIGHT / 2.0 + (-(tx - cx) * sin_t + (ty - cy) * cos_t) / self.ZOOM
                     
                     if 0 <= tsx <= self.WIDTH and 0 <= tsy <= self.HEIGHT:
-                        # Твердый контрастный луч наведения
                         pygame.draw.line(surface, color, (int(sx_c), int(sy_c)), (int(tsx), int(tsy)), 1)
-                        # Перекрестие прицела на враге
                         pygame.draw.circle(surface, color, (int(tsx), int(tsy)), 4, 1)
 
             for i in range(16):
@@ -198,6 +228,9 @@ class VortexRenderer:
                 if 0 <= sx <= self.WIDTH and 0 <= sy <= self.HEIGHT:
                     pygame.draw.circle(surface, alpha_col, (int(sx), int(sy)), 6, 1)
                     pygame.draw.circle(surface, color, (int(sx), int(sy)), 2)
+                    
+        # Вызываем спектроскопический сканер солитонов (всегда рисуется при включенных сенсорах)
+        self.draw_soliton_telemetry(surface, arena)
 
     def draw_floating_combat_text(self, surface, arena):
         """ Отрисовка всплывающих цифр урона над юнитами """

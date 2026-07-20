@@ -7,8 +7,6 @@ This project operates on the **Mathematical Universe Hypothesis** and the philos
 *   **The Platonic World** (governed by mathematical truths, including the Nonlinear Schrödinger fluid fields, the Kuramoto Coupled Phase equations, and Feigenbaum's non-linear limits) processes these projections to organize the system.
 *   **The Physical World** (realized through the high-speed GPU render viewport and the 44100Hz spatialized procedural audio buffer) represents, displays, and sonifies these emergent, dissipative structures in real-time.
 
-[three mages squad](https://drive.google.com/file/d/1YitlAWQluLQlMS34IE_sG5r6UKg3E3ov/view)
-
 ---
 
 ## ⚡ THE HOLOGRAPHIC 26mm INTERFACE (FreeEEG16-alpha2)
@@ -95,13 +93,35 @@ Because the BCI micro-array registers a continuous spectrum of coherence, the br
 
 ---
 
-## ⚔️ THE MAGE'S MAGICAL PROJECTILES (PHYSICALIZED CAVITATION)
+## ⚔️ THE MAGE'S MAGICAL PROJECTILES (PHYSICALIZED SOLITONS)
 
-Mage (Artillery) attacks represent the ultimate fusion of magic and fluid physics. Rather than utilizing hardcoded damage triggers, the Mage's magical projectiles (**Topological Solitons**) are generated as true physical phenomena:
+Mage (Artillery) attacks represent the ultimate fusion of magic and non-linear wave mechanics. Rather than utilizing hardcoded particle triggers or simple coordinates tracking, the Mage's attacks are simulated as **genuine physical Solitary Waves (Solitons)** propagating strictly through the unified 2D fluid solver on the GPU:
 
-1.  **The Collision Interface**: When a player directs high-velocity **Beta currents** (propulsion) into a dense wall of **Theta-gel** (cohesion), the boundary sharply folds.
-2.  **Cross-Frequency Conversion (CFC)**: The kinetic energy of the collision is compressed at the interface.
-3.  **Soliton Launch**: This compressed energy undergoes cross-frequency conversion, creating a high-density, non-dispersive **Gamma Soliton** that detonates directly on the GPU, tearing through enemy nodes via physical cavitation.
+### 🌊 Waveguide Self-Focusing & Superfluidity
+To prevent the wave packet from dispersing into chaotic noise, the simulation implements non-linear focusing and superfluid kinetics:
+1.  **Transverse Cohesion**: The fluid solver applies a localized squeezing force perpendicular to the velocity vector ($f \propto \nabla_{\perp}\rho_\gamma$). This constricts the wave packet into a tight, highly directional projectile beam without decelerating its forward momentum.
+2.  **Local Superfluidity**: Where the Gamma-band (Yang/Fire) density is high, the viscosity and friction of the local fluid drop to zero, allowing the wave to glide smoothly across the screen like a quantum wave packet in a Bose-Einstein Condensate.
+3.  **Low Entropy Structures**: Unlike standard explosive, high-entropy dissipating waves, a soliton is a self-sustaining, organized structure of extremely low entropy. It maintains its shape, velocity, and Phase Coherence while travelling, exporting chaos (high shear rates and turbulence) only to its outer boundaries.
+
+```
+                    [ Mage Node ]
+                          │
+             ( Injects Directed Gamma Jet )
+                          │
+                          ▼
+            [ Waveguide Soliton Packet ]  <── (Squeezed laterally by Transverse Cohesion)
+              │  │  │  │  │  │  │  │  │
+              └──┴──┴──┴──┴──┴──┴──┴──┘   <── (Moves with zero friction via Superfluidity)
+                          │
+                          ▼
+               [ Target Node Contact ]    <── (Triggers physical Shear Damage on collision)
+```
+
+### 📡 Spectroscopic Soliton Scanner
+The simulation features an active real-time GPU-based peak-finding algorithm. It dynamically tracks emergent wave packets across the grid and projects a **Holographic Telemetry Overlay** directly onto the screen. This system analyzes and renders:
+*   **Amplitude (Amp)**: The core energy density of the moving wave.
+*   **Velocity (Vel)**: The physical speed of the wave packet in pixels per second.
+*   **Phase Coherence (Coh)**: The structural stability of the wave, mapped against the Feigenbaum Constant ($4.6692016$) as a measure of non-equilibrium order.
 
 ---
 
