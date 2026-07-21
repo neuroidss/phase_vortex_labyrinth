@@ -160,10 +160,8 @@ class BossFightArena:
         self.static_walls = ((torch.abs(x) > 0.94) | (torch.abs(y) > 0.94)).float().view(1, 1, COMPUTE_RES, COMPUTE_RES)
         
         self.freqs_hz = torch.linspace(1.0, 100.0, 100, device=device).view(1, 100, 1, 1)
-        # OPTIMIZATION: Wide red window centered at 65.0 to render Low, Mid and High Gamma beautifully
         self.w_red   = torch.exp(-((self.freqs_hz - 65.0) ** 2) / 600.0)
         self.w_green = torch.exp(-((self.freqs_hz - 24.0) ** 2) / 144.0)
-        # OPTIMIZATION: Centered at 8.0 to render both 6Hz and 10Hz as beautiful Blue/Cyan
         self.w_blue  = torch.exp(-((self.freqs_hz - 8.0) ** 2) / 100.0)
         self.wall_color = torch.tensor([50, 15, 60], dtype=torch.uint8, device=device).view(3, 1)
 
@@ -240,20 +238,25 @@ class BossFightArena:
         
         # Spawns at 65px (completely outside the softbody radius)
         inj_x, inj_y = s_pos[0] + dir_x * 65.0, s_pos[1] + dir_y * 65.0
-        gx, gy = int((inj_x / ARENA_WIDTH) * COMPUTE_RES), int((inj_y / HEIGHT) * COMPUTE_RES)
         
         success = False
-        if 3 <= gx < COMPUTE_RES - 3 and 3 <= gy < COMPUTE_RES - 3:
-            success = True
-            # Spectral Bow team routing: Team 0 = 60Hz, Team 1 = 65Hz
-            freq = 60.0 if source.team == 0 else 65.0
-            # Solid 3x3 bullet kernel that survives flight decay
-            for dy in range(-1, 2):
-                for dx in range(-1, 2):
-                    weight = 1.0 - (dx*dx + dy*dy)/3.0
-                    self.density_spectral[0, int(freq), gy+dy, gx+dx] += weight * 45.0
-                    self.u[0, 0, gy+dy, gx+dx] += dir_x * 1500.0 * weight
-                    self.v[0, 0, gy+dy, gx+dx] += dir_y * 1500.0 * weight
+        freq = 60.0 if source.team == 0 else 65.0
+        
+        # Inject linear self-focusing arrow waveguide needle
+        for step in range(5):
+            curr_x = inj_x + dir_x * (step * 5.0)
+            curr_y = inj_y + dir_y * (step * 5.0)
+            gx, gy = int((curr_x / ARENA_WIDTH) * COMPUTE_RES), int((curr_y / HEIGHT) * COMPUTE_RES)
+            
+            if 3 <= gx < COMPUTE_RES - 3 and 3 <= gy < COMPUTE_RES - 3:
+                success = True
+                for dy in range(-1, 2):
+                    for dx in range(-1, 2):
+                        weight = 1.0 - (dx*dx + dy*dy)/3.0
+                        self.density_spectral[0, int(freq), gy+dy, gx+dx] += weight * 50.0
+                        self.u[0, 0, gy+dy, gx+dx] += dir_x * 2500.0 * weight
+                        self.v[0, 0, gy+dy, gx+dx] += dir_y * 2500.0 * weight
+                        
         source.current_action = "[SHOOTING]" if success else "[BLOCKED]"
         return success
 
@@ -264,21 +267,30 @@ class BossFightArena:
         dx, dy = dir_x / dist, dir_y / dist
         
         success = False
-        angles = [-0.3, 0.0, 0.3]
-        # Spectral Shuriken team routing: Team 0 = 40Hz, Team 1 = 45Hz
+        angles = [-0.35, 0.0, 0.35]
         freq = 40.0 if source.team == 0 else 45.0
+        
         for a in angles:
             rx, ry = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
             inj_x, inj_y = s_pos[0] + rx * 55.0, s_pos[1] + ry * 55.0
             gx, gy = int((inj_x / ARENA_WIDTH) * COMPUTE_RES), int((inj_y / HEIGHT) * COMPUTE_RES)
-            if 2 <= gx < COMPUTE_RES - 2 and 2 <= gy < COMPUTE_RES - 2:
+            
+            if 3 <= gx < COMPUTE_RES - 3 and 3 <= gy < COMPUTE_RES - 3:
                 success = True
-                # Inject three 2x2 dense shurikens
-                for dy in range(-1, 1):
-                    for dx in range(-1, 1):
-                        self.density_spectral[0, int(freq), gy+dy, gx+dx] += 25.0
-                        self.u[0, 0, gy+dy, gx+dx] += rx * 1100.0
-                        self.v[0, 0, gy+dy, gx+dx] += ry * 1100.0
+                # Inject shuriken density and localized spinning vortex dipoles (micro whirlpools)
+                for dy_offset in range(-2, 3):
+                    for dx_offset in range(-2, 3):
+                        r_sq = dx_offset**2 + dy_offset**2
+                        if r_sq <= 5:
+                            weight = 1.0 - (r_sq / 6.0)
+                            self.density_spectral[0, int(freq), gy+dy_offset, gx+dx_offset] += weight * 35.0
+                            self.u[0, 0, gy+dy_offset, gx+dx_offset] += rx * 1400.0 * weight
+                            self.v[0, 0, gy+dy_offset, gx+dx_offset] += ry * 1400.0 * weight
+                            if r_sq > 0:
+                                tx = -float(dy_offset) / math.sqrt(r_sq)
+                                ty = float(dx_offset) / math.sqrt(r_sq)
+                                self.u[0, 0, gy+dy_offset, gx+dx_offset] += tx * 800.0 * weight
+                                self.v[0, 0, gy+dy_offset, gx+dx_offset] += ty * 800.0 * weight
         return success
 
     # --- CHANNELING WEAPONS (Continuous energy streams) ---
@@ -293,7 +305,6 @@ class BossFightArena:
         
         gx, gy = int((inj_x / ARENA_WIDTH) * COMPUTE_RES), int((inj_y / HEIGHT) * COMPUTE_RES)
         if 2 <= gx < COMPUTE_RES - 2 and 2 <= gy < COMPUTE_RES - 2:
-            # Spectral Magic team routing: Team 0 = 80Hz, Team 1 = 85Hz
             freq = 80.0 if source.team == 0 else 85.0
             self.density_spectral[0, int(freq), gy-1:gy+2, gx-1:gx+2] += 30.0 * dt * pulse
             self.u[0, 0, gy-1:gy+2, gx-1:gx+2] += dir_x * 800.0 * dt * pulse
@@ -305,24 +316,23 @@ class BossFightArena:
         dist = math.hypot(dir_x, dir_y) + 1e-5
         dir_x, dir_y = dir_x / dist, dir_y / dist
         
-        for offset in [-12, 0, 12]:
-            px, py = dir_x * math.cos(1.57) - dir_y * math.sin(1.57), dir_x * math.sin(1.57) + dir_y * math.cos(1.57)
-            inj_x, inj_y = s_pos[0] + dir_x * 25.0 + px * offset, s_pos[1] + dir_y * 25.0 + py * offset
-            gx, gy = int((inj_x / ARENA_WIDTH) * COMPUTE_RES), int((inj_y / HEIGHT) * COMPUTE_RES)
+        px, py = -dir_y, dir_x
+        freq = 80.0 if source.team == 0 else 85.0
+        
+        # Inject crescent flying wave (crescent physical wave guides)
+        for offset in [-16, -8, 0, 8, 16]:
+            sag = -0.4 * abs(offset)
+            inj_x = s_pos[0] + dir_x * (30.0 + sag) + px * offset
+            inj_y = s_pos[1] + dir_y * (30.0 + sag) + py * offset
             
+            gx, gy = int((inj_x / ARENA_WIDTH) * COMPUTE_RES), int((inj_y / HEIGHT) * COMPUTE_RES)
             if 2 <= gx < COMPUTE_RES - 2 and 2 <= gy < COMPUTE_RES - 2:
-                # Spectral Sword team routing: Team 0 = 80Hz, Team 1 = 85Hz
-                freq = 80.0 if source.team == 0 else 85.0
-                # Green (Beta) for kinetic disruption & visual blade
-                self.density_spectral[0, 24, gy, gx] += 50.0 * dt
-                # Red (Gamma) for actual damage
-                self.density_spectral[0, int(freq), gy, gx] += 35.0 * dt
-                # Heavy forward push
-                self.u[0, 0, gy, gx] += dir_x * 1200.0 * dt
-                self.v[0, 0, gy, gx] += dir_y * 1200.0 * dt
+                self.density_spectral[0, 24, gy-1:gy+2, gx-1:gx+2] += 40.0 * dt
+                self.density_spectral[0, int(freq), gy-1:gy+2, gx-1:gx+2] += 30.0 * dt
+                self.u[0, 0, gy-1:gy+2, gx-1:gx+2] += dir_x * 1600.0 * dt
+                self.v[0, 0, gy-1:gy+2, gx-1:gx+2] += dir_y * 1600.0 * dt
 
     def channel_shield(self, source, dt):
-        """ SHIELD IS MOVED TO ALPHA SPECTRUM (10Hz). No self-healing! """
         s_pos = source.pos.cpu().numpy()
         gx, gy = int((s_pos[0] / ARENA_WIDTH) * COMPUTE_RES), int((s_pos[1] / HEIGHT) * COMPUTE_RES)
         if 3 <= gx < COMPUTE_RES - 3 and 3 <= gy < COMPUTE_RES - 3:
@@ -330,11 +340,9 @@ class BossFightArena:
                 for dx in range(-3, 4):
                     if dx*dx + dy*dy <= 9:
                         weight = 1.0 - (dx*dx + dy*dy)/10.0
-                        # Injecting into Alpha frequency 10.0
-                        self.density_spectral[0, 10, gy+dy, gx+dx] += weight * 60.0 * dt # Heavy Blue
+                        self.density_spectral[0, 10, gy+dy, gx+dx] += weight * 60.0 * dt
 
     def channel_heal(self, source, dt):
-        """ HEAL MIST IS MOVED TO THETA SPECTRUM (6Hz). """
         s_pos = source.pos.cpu().numpy()
         gx, gy = int((s_pos[0] / ARENA_WIDTH) * COMPUTE_RES), int((s_pos[1] / HEIGHT) * COMPUTE_RES)
         if 4 <= gx < COMPUTE_RES - 4 and 4 <= gy < COMPUTE_RES - 4:
@@ -344,9 +352,7 @@ class BossFightArena:
                         weight = 1.0 - (dx*dx + dy*dy)/17.0
                         dir_x, dir_y = float(dx), float(dy)
                         dist = math.hypot(dir_x, dir_y) + 1e-5
-                        # Injecting into Theta frequency 6.0
                         self.density_spectral[0, 6, gy+dy, gx+dx] += weight * 20.0 * dt
-                        # Radial outward push
                         self.u[0, 0, gy+dy, gx+dx] += (dir_x/dist) * 60.0 * dt
                         self.v[0, 0, gy+dy, gx+dx] += (dir_y/dist) * 60.0 * dt
 
@@ -362,8 +368,8 @@ class BossFightArena:
         elif actor.weapon == "Shuriken":
             for _ in range(3): self.fire_shuriken(actor, t_pos + np.random.randn(2)*15)
         elif actor.weapon == "Sword":
-            self.strike_sword(actor, t_pos)
-            self.strike_sword(actor, t_pos)
+            self.channel_sword(actor, t_pos, 1.0)
+            self.channel_sword(actor, t_pos, 1.0)
         elif actor.weapon == "Magic":
             self.channel_magic(actor, t_pos, 1.0)
         elif actor.weapon == "Shield":
@@ -392,32 +398,25 @@ class BossFightArena:
         # ====================================================================
         lap_spec = self.solver.compute_laplacian(self.density_spectral)
         
-        # 1. INDEPENDENT ACTIVE COMPACTNESS: Shurikens (40Hz), Bow (60Hz) and Magic (80Hz) 
-        # now each have custom self-focusing equations! No infinite runaway freezing!
         shuriken_spec = self.density_spectral[:, 37:50]
         bow_spec      = self.density_spectral[:, 50:70]
         magic_spec    = self.density_spectral[:, 70:90]
         
-        # Shurikens (40Hz) self-focus moderately (allows some scatter)
         self.density_spectral[:, 37:50] += 6.0 * shuriken_spec * (shuriken_spec - 0.3) * (1.5 - shuriken_spec) * dt
-        # Bow (60Hz) self-focuses strongly (holds laser-tight lines in flight)
         self.density_spectral[:, 50:70] += 12.0 * bow_spec * (bow_spec - 0.2) * (2.2 - bow_spec) * dt
-        # Magic (80Hz) self-focuses solidly (holds mycelium streams)
         self.density_spectral[:, 70:90] += 8.0 * magic_spec * (magic_spec - 0.35) * (1.8 - magic_spec) * dt
         
-        # Base diffusion for all
         self.density_spectral = torch.clamp(self.density_spectral + lap_spec * (0.04 / torch.sqrt(self.freqs_hz)) * dt, 0.0, 3.5)
 
         # Frequency drift
         psi_prev, psi_next = torch.roll(self.density_spectral, 1, 1), torch.roll(self.density_spectral, -1, 1)
         self.density_spectral = torch.clamp(self.density_spectral + 0.5 * self.density_spectral * (psi_prev - psi_next) * dt, 0.0, 3.5)
 
-        # 3. GLOBAL ENTROPY EVAPORATION (Frame-rate independent)
-        # Gamma active attack classes decay according to their respective tactical roles
+        # Evaporation decay limits
         self.density_spectral[:, 70:90] *= torch.clamp(torch.tensor(1.0 - 1.2 * dt, device=device), 0.0, 1.0) # Magic (80Hz)
-        self.density_spectral[:, 50:70] *= torch.clamp(torch.tensor(1.0 - 0.4 * dt, device=device), 0.0, 1.0) # Bow (60Hz) - long flight sniper!
-        self.density_spectral[:, 37:50] *= torch.clamp(torch.tensor(1.0 - 1.8 * dt, device=device), 0.0, 1.0) # Shuriken (40Hz) - moderate scatter!
-        self.density_spectral[:, 18:37] *= torch.clamp(torch.tensor(1.0 - 4.5 * dt, device=device), 0.0, 1.0) # Beta (Green) - dies very fast
+        self.density_spectral[:, 50:70] *= torch.clamp(torch.tensor(1.0 - 0.4 * dt, device=device), 0.0, 1.0) # Bow (60Hz)
+        self.density_spectral[:, 37:50] *= torch.clamp(torch.tensor(1.0 - 1.8 * dt, device=device), 0.0, 1.0) # Shuriken (40Hz)
+        self.density_spectral[:, 18:37] *= torch.clamp(torch.tensor(1.0 - 4.5 * dt, device=device), 0.0, 1.0) # Beta
         self.density_spectral[:, 4:9] *= torch.clamp(torch.tensor(1.0 - 2.5 * dt, device=device), 0.0, 1.0)   # Theta (Blue/Heal)
         self.density_spectral[:, 9:13] *= torch.clamp(torch.tensor(1.0 - 2.5 * dt, device=device), 0.0, 1.0)  # Alpha (Blue/Shield)
 
@@ -438,7 +437,7 @@ class BossFightArena:
         self.u += grad_t_x * kinetic_clash * 5.0 * dt
         self.v += grad_t_y * kinetic_clash * 5.0 * dt
 
-        # 5. FLUID FRICTION & WEAK SUPERFLUIDITY
+        # FLUID FRICTION & WEAK SUPERFLUIDITY
         shuriken_band = torch.sum(self.density_spectral[:, 37:50], dim=1, keepdim=True) 
         bow_band      = torch.sum(self.density_spectral[:, 50:70], dim=1, keepdim=True) 
         magic_band    = torch.sum(self.density_spectral[:, 70:90], dim=1, keepdim=True) 
@@ -446,14 +445,14 @@ class BossFightArena:
         active_projectiles = shuriken_band + bow_band + magic_band
         gamma_presence = torch.clamp(active_projectiles / 1.5, 0.0, 1.0)
         
-        # Superfluidity: Friction is high in empty space (4.5), but drops near zero inside solitons (0.2)
         friction = 4.5 - gamma_presence * 4.3
         self.u *= torch.clamp(1.0 - friction * dt, 0.0, 1.0)
         self.v *= torch.clamp(1.0 - friction * dt, 0.0, 1.0)
         
-        self.u = torch.clamp(self.u, -250.0, 250.0)
-        self.v = torch.clamp(self.v, -250.0, 250.0)
-
+        # Slashes, Arrow, Shurikens can travel cleanly without hard velocity limits
+        self.u = torch.clamp(self.u, -1200.0, 1200.0)
+        self.v = torch.clamp(self.v, -1200.0, 1200.0)
+        
         # Transverse Squeezing waveguides computed individually for each attack band
         for band, squeeze_power in [(shuriken_band, 50.0), (bow_band, 150.0), (magic_band, 80.0)]:
             band_pad = F.pad(band, (1, 1, 1, 1), mode='replicate')
@@ -466,12 +465,12 @@ class BossFightArena:
             self.u += (bgx - dot_g_v * (self.u/speed)) * squeeze_power * dt
             self.v += (bgy - dot_g_v * (self.v/speed)) * squeeze_power * dt
             
-        # Active Matter Self-Propulsion engine driving each class
+        # Active Matter Self-Propulsion engine driving each class (Boosted coefficients)
         speed = torch.sqrt(self.u**2 + self.v**2) + 1e-5
-        self.u += (self.u/speed) * (shuriken_band * 120.0 + bow_band * 450.0 + magic_band * 180.0) * dt
-        self.v += (self.v/speed) * (shuriken_band * 120.0 + bow_band * 450.0 + magic_band * 180.0) * dt
+        self.u += (self.u/speed) * (shuriken_band * 350.0 + bow_band * 850.0 + magic_band * 450.0) * dt
+        self.v += (self.v/speed) * (shuriken_band * 350.0 + bow_band * 850.0 + magic_band * 450.0) * dt
         
-        # Beta (Green) creates local turbulent vortices to simulate sword slashes
+        # Beta creates local turbulent vortices to simulate sword slashes
         beta_band = torch.sum(self.density_spectral[:, 18:37], dim=1, keepdim=True)
         gx_b = 0.5 * (F.pad(beta_band, (1,1,1,1), mode='replicate')[:, :, 1:-1, 2:] - F.pad(beta_band, (1,1,1,1), mode='replicate')[:, :, 1:-1, :-2])
         gy_b = 0.5 * (F.pad(beta_band, (1,1,1,1), mode='replicate')[:, :, 2:, 1:-1] - F.pad(beta_band, (1,1,1,1), mode='replicate')[:, :, :-2, 1:-1])
@@ -496,17 +495,13 @@ class BossFightArena:
                     theta_val = self.density_spectral[0, 4:9, gy, gx].sum().item()   # Heal (6Hz)
                     alpha_val = self.density_spectral[0, 9:13, gy, gx].sum().item()  # Shield (10Hz)
                     
-                    # --- SPECTRAL TEAM ROUTING: DAMAGE CHECKS (75Hz vs 85Hz sub-channels) ---
                     if act.team == 0:
-                        # Team 0 takes damage only from Team 1's low, mid, high Gamma attacks (45, 65, 85)
                         gamma_val = self.density_spectral[0, [45, 65, 85], gy, gx].sum().item()
                     else:
-                        # Team 1 takes damage only from Team 0's low, mid, high Gamma attacks (40, 60, 80)
                         gamma_val = self.density_spectral[0, [40, 60, 80], gy, gx].sum().item()
                     
-                    # --- SHIELD BARRIER ABSORPTION PHYSICS ---
+                    # Shield Barrier Physics
                     if alpha_val > 0.30:
-                        # Shield actively absorbs Gamma (damage) and dampens fluid velocity (kinetic barrier)
                         self.density_spectral[0, 60:100, gy, gx] *= 0.15 
                         self.u[0, 0, gy, gx] *= 0.25 
                         self.v[0, 0, gy, gx] *= 0.25 
@@ -524,12 +519,10 @@ class BossFightArena:
                         if random.random() < 0.15:
                             self.damage_numbers.append({"pos": [nx, ny], "text": f"-{int(dmg_rate * 100)}", "life": 1.0, "color": (255, 100, 100) if act.team == 0 else (0, 255, 255)})
 
-                        # Target absorbs wave energy
                         self.density_spectral[0, 60:100, gy, gx] *= 0.1
                         self.u[0, 0, gy, gx] *= 0.1
                         self.v[0, 0, gy, gx] *= 0.1
                         
-                    # --- SHIELD BALANCING & ROLE ABSORPTION (Theta ONLY heals, Shield does not!) ---
                     if theta_val > 0.30 and act.integrity < 1.0:
                         is_tank = (act.style == "Tank")
                         if not is_tank:
@@ -589,19 +582,55 @@ class BossFightArena:
                             act.channel_duration = random.uniform(2.0, 3.5)
                             act.cooldown = random.uniform(1.5, 3.0)
                             
-                elif act.weapon == "Heal" or act.weapon == "Shield":
-                    steer_dir = -dir_enemy
+                elif act.weapon == "Shield":
+                    # Tanks run directly towards closest enemies to block and absorb pressure
+                    if dist_enemy > 80.0:
+                        steer_dir = dir_enemy
+                        act.current_action = "[INTERCEPTING]"
+                    else:
+                        steer_dir = dir_enemy * 0.2
+                        act.current_action = "[BLOCKING]"
+                        
                     if act.channel_duration > 0:
                         act.channel_duration -= dt
-                        steer_dir = np.array([0.0, 0.0]) 
-                        if act.weapon == "Heal": self.channel_heal(act, dt) 
-                        else: self.channel_shield(act, dt) 
+                        steer_dir = np.array([0.0, 0.0])
+                        self.channel_shield(act, dt)
                     else:
                         act.cooldown -= dt
-                        act.current_action = "[RELOADING]"
+                        if act.cooldown <= 0:
+                            act.channel_duration = random.uniform(1.5, 3.0)
+                            act.cooldown = random.uniform(1.5, 3.0)
+                            
+                elif act.weapon == "Heal":
+                    # Healers find the most injured teammate
+                    injured_allies = [a for a in allies if a.integrity < 0.95]
+                    if injured_allies:
+                        weakest_ally = min(injured_allies, key=lambda a: a.integrity)
+                        dir_ally = (weakest_ally.pos - act.pos).cpu().numpy()
+                        dist_ally = math.hypot(dir_ally[0], dir_ally[1]) + 1e-5
+                        
+                        if dist_ally > 50.0:
+                            steer_dir = dir_ally / dist_ally
+                            act.current_action = f"[HEALING {weakest_ally.name[:4].upper()}]"
+                        else:
+                            steer_dir = np.array([0.0, 0.0])
+                            act.current_action = f"[MISTING {weakest_ally.name[:4].upper()}]"
+                    else:
+                        if dist_enemy < 200.0:
+                            steer_dir = -dir_enemy
+                            act.current_action = "[KITING]"
+                        else:
+                            steer_dir = np.array([0.0, 0.0])
+                            act.current_action = "[POSITIONING]"
+                            
+                    if act.channel_duration > 0:
+                        act.channel_duration -= dt
+                        self.channel_heal(act, dt)
+                    else:
+                        act.cooldown -= dt
                         if act.cooldown <= 0:
                             act.channel_duration = random.uniform(1.0, 2.5)
-                            act.cooldown = random.uniform(2.0, 4.0)
+                            act.cooldown = random.uniform(1.5, 3.0)
 
                 elif act.weapon == "Sword":
                     steer_dir = dir_enemy; act.current_action = "[RUSHING]"
@@ -613,13 +642,13 @@ class BossFightArena:
                         else: act.channel_duration = 0.0
                     else:
                         act.cooldown -= dt
-                        if act.cooldown <= 0 and dist_enemy < 70.0:
+                        # Can launch slashes from a medium distance (up to 180px)
+                        if act.cooldown <= 0 and dist_enemy < 180.0:
                             act.channel_target = closest_enemy
                             act.channel_duration = random.uniform(0.5, 1.0)
                             act.cooldown = random.uniform(0.5, 1.0)
                             
                 elif act.weapon == "Bow":
-                    # FIXED: Orbiting / Strafing movement logic for dynamic kiters (No index errors!)
                     tangent_vec = np.array([-dir_enemy[1], dir_enemy[0]])
                     if dist_enemy > 320.0:
                         steer_dir = dir_enemy * 0.7 + tangent_vec * 0.3
@@ -628,7 +657,6 @@ class BossFightArena:
                         steer_dir = -dir_enemy * 0.7 + tangent_vec * 0.3
                         act.current_action = "[KITING]"
                     else:
-                        # Circle around optimal range
                         steer_dir = tangent_vec * 1.0
                         act.current_action = "[STRAFING]"
                     
@@ -638,7 +666,6 @@ class BossFightArena:
                         act.cooldown = random.uniform(1.2, 1.8) if success else 0.1
                         
                 elif act.weapon == "Shuriken":
-                    # FIXED: Swift Ninja movement: quick circle-strafes and recoil dodges (No index errors!)
                     tangent_vec = np.array([-dir_enemy[1], dir_enemy[0]])
                     if dist_enemy > 180.0:
                         steer_dir = dir_enemy * 0.8 + tangent_vec * 0.2
@@ -654,7 +681,6 @@ class BossFightArena:
                     if act.cooldown <= 0:
                         success = self.fire_shuriken(act, closest_enemy.pos.cpu().numpy())
                         if success:
-                            # Elastic dodge jump backward on release!
                             act.pin_pos[:, 0] -= dir_enemy[0] * 35.0
                             act.pin_pos[:, 1] -= dir_enemy[1] * 35.0
                             act.current_action = "[BACKDODGE]"
@@ -816,7 +842,6 @@ def main():
                 status_color = (0, 255, 200) if act.team == 0 else (255, 100, 100)
                 if act.channel_duration > 0: status_color = (255, 200, 255) 
                 
-                # --- HUD AI ACTION FEEDBACK ---
                 screen.blit(font_med.render(f"{act.name[:13]}", True, (255, 255, 255) if not act.is_dead else (120, 120, 120)), (cx + 7, card_y + 4))
                 screen.blit(font_small.render(f"Lv.{act.level} {act.weapon}", True, status_color if not act.is_dead else (100, 100, 100)), (cx + 7, card_y + 20))
                 
